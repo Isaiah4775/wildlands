@@ -294,9 +294,19 @@ impl EnemyKind {
     /// still has to be clear of trees and boulders.
     pub fn sight_range(self) -> f32 {
         match self {
-            EnemyKind::Wolf => 470.0,
-            EnemyKind::Bear => 340.0,
-            EnemyKind::Raider => 540.0,
+            EnemyKind::Wolf => 600.0,
+            EnemyKind::Bear => 450.0,
+            EnemyKind::Raider => 620.0,
+        }
+    }
+
+    /// Noise carries through cover: inside this radius the survivor is heard
+    /// even with trees and boulders in the way.
+    pub fn hearing_range(self) -> f32 {
+        match self {
+            EnemyKind::Wolf => 260.0,
+            EnemyKind::Bear => 210.0,
+            EnemyKind::Raider => 280.0,
         }
     }
 
@@ -343,7 +353,7 @@ pub struct Enemy {
 
 /// How long an animal keeps hunting after it loses sight of the survivor
 /// before it gives up and goes back to grazing.
-const LOSE_INTEREST_TIME: f32 = 5.0;
+const LOSE_INTEREST_TIME: f32 = 7.0;
 
 /// Never more than this many wolves, bears and raiders alive at once.
 const MAX_ENEMIES: usize = 10;
@@ -763,9 +773,12 @@ impl World {
             // that line for long enough and they lose interest and wander off.
             let sees_player =
                 dist_player < kind.sight_range() && self.clear_path(epos, player.pos);
+            // Crashing through the undergrowth is loud; cover only hides you
+            // from a distance.
+            let hears_player = dist_player < kind.hearing_range();
             // At touching distance there is nothing left to hide behind.
             let pressed = dist_player < er + player.radius + 60.0;
-            if sees_player || pressed {
+            if sees_player || hears_player || pressed {
                 self.enemies[i].lost_timer = 0.0;
                 if !self.enemies[i].alerted {
                     self.enemies[i].alerted = true;
