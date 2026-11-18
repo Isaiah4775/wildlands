@@ -450,6 +450,14 @@ struct Decor {
     tint: f32,
 }
 
+/// A straw archery target. It soaks every arrow and round and never breaks, so
+/// there is always something to aim at between fights and harvest runs.
+pub struct PracticeTarget {
+    pub pos: Vec2,
+    /// Counts down after a hit so the face flashes on impact.
+    pub flash: f32,
+}
+
 // ---------------------------------------------------------------------------
 // World
 // ---------------------------------------------------------------------------
@@ -463,6 +471,7 @@ pub struct World {
     pub floaters: Vec<Floater>,
     particles: Vec<Particle>,
     decor: Vec<Decor>,
+    pub targets: Vec<PracticeTarget>,
     pub spawn_timer: f32,
     pub elapsed: f32,
     /// Highest mastery level that living enemies have been scaled to.
@@ -481,6 +490,7 @@ impl World {
             floaters: Vec::new(),
             particles: Vec::new(),
             decor: Vec::new(),
+            targets: Vec::new(),
             spawn_timer: 4.0,
             elapsed: 0.0,
             hp_level: 1,
@@ -602,6 +612,20 @@ impl World {
                 self.push_node(pos, kind);
             }
         }
+
+        // A practice range a few paces east of the starting clearing, clear of
+        // trees so there is an open line from the camp.
+        self.targets.clear();
+        for off in [vec2(300.0, -170.0), vec2(330.0, 0.0), vec2(300.0, 170.0)] {
+            self.targets.push(PracticeTarget {
+                pos: center + off,
+                flash: 0.0,
+            });
+        }
+        let spots: Vec<Vec2> = self.targets.iter().map(|t| t.pos).collect();
+        self.nodes.retain(|n| {
+            !n.kind.solid() || spots.iter().all(|p| p.distance(n.pos) > n.radius * 0.7 + 34.0)
+        });
     }
 
     fn push_node(&mut self, pos: Vec2, kind: NodeKind) {
@@ -710,6 +734,12 @@ impl World {
         for node in self.nodes.iter_mut() {
             if node.shake > 0.0 {
                 node.shake = (node.shake - dt).max(0.0);
+            }
+        }
+
+        for t in self.targets.iter_mut() {
+            if t.flash > 0.0 {
+                t.flash = (t.flash - dt).max(0.0);
             }
         }
 
@@ -1196,6 +1226,16 @@ impl World {
                 }
             }
         }
+        // Practice targets stop any round that reaches them.
+        for bi in 0..self.bullets.len() {
+            if self.bullets[bi].life <= 0.0 {
+                continue;
+            }
+            let pos = self.bullets[bi].pos;
+            if self.hit_target_at(pos, Color::new(0.98, 0.84, 0.4, 0.9)) {
+                self.bullets[bi].life = 0.0;
+            }
+        }
         self.bullets.retain(|b| b.life > 0.0);
     }
 
@@ -1261,7 +1301,44 @@ impl World {
                 }
             }
         }
+        for ai in 0..self.arrows.len() {
+            if self.arrows[ai].life <= 0.0 {
+                continue;
+            }
+            let pos = self.arrows[ai].pos;
+            if self.hit_target_at(pos, Color::new(0.62, 0.94, 1.0, 0.9)) {
+                self.arrows[ai].life = 0.0;
+            }
+        }
         self.arrows.retain(|a| a.life > 0.0);
+    }
+
+    /// Registers a hit on a practice target, returning true when one was struck.
+    /// Centre hits shout BULLSEYE, everything else just HIT.
+    fn hit_target_at(&mut self, pos: Vec2, spark: Color) -> bool {
+        let hit = self
+            .targets
+            .iter()
+            .position(|t| t.pos.distance(pos) < 21.0);
+        let Some(ti) = hit else {
+            return false;
+        };
+        let tpos = self.targets[ti].pos;
+        self.targets[ti].flash = 0.25;
+        let bullseye = tpos.distance(pos) < 7.5;
+        self.particles.extend(burst(pos, spark, 4, 120.0, 2.2, 140.0));
+        self.floaters.push(Floater {
+            pos: tpos + vec2(0.0, -34.0),
+            text: if bullseye { "BULLSEYE" } else { "HIT" }.to_string(),
+            color: if bullseye {
+                Color::new(1.0, 0.86, 0.35, 1.0)
+            } else {
+                Color::new(0.92, 0.94, 0.98, 1.0)
+            },
+            life: 0.7,
+            max_life: 0.7,
+        });
+        true
     }
 
     fn update_enemy_shots(&mut self, dt: f32, player: &mut Player) {
@@ -1763,6 +1840,36 @@ impl World {
                     n.hp / n.max_hp,
                     n.kind.resource().color(),
                 );
+            }
+        }
+    }
+
+    pub fn draw_targets(&self, camera_target: Vec2) {
+        let (min, max) = view_bounds(camera_target);
+        for t in self.targets.iter() {
+            if !on_screen(t.pos, min, max, 80.0) {
+                continue;
+            }
+            let p = t.pos;
+            shadow(p + vec2(3.0, 8.0), 24.0);
+            // Timber post holding the straw face up off the grass.
+            draw_rectangle(p.x - 4.0, p.y + 4.0, 8.0, 28.0, OUTLINE);
+            draw_rectangle(
+                p.x - 2.0,
+                p.y + 4.0,
+                4.0,
+                27.0,
+                Color::new(0.42, 0.30, 0.17, 1.0),
+            );
+            // Straw face: cream and red rings with a pale centre dot.
+            outlined_circle(p, 20.0, Color::new(0.86, 0.78, 0.58, 1.0));
+            draw_circle(p.x, p.y, 15.0, Color::new(0.78, 0.20, 0.22, 1.0));
+            draw_circle(p.x, p.y, 10.0, Color::new(0.92, 0.86, 0.66, 1.0));
+            draw_circle(p.x, p.y, 5.0, Color::new(0.78, 0.20, 0.22, 1.0));
+            draw_circle(p.x, p.y, 1.6, Color::new(1.0, 0.96, 0.86, 1.0));
+            if t.flash > 0.0 {
+                let a = (t.flash / 0.25).clamp(0.0, 1.0);
+                draw_circle_lines(p.x, p.y, 23.0, 2.0, Color::new(1.0, 0.9, 0.5, a));
             }
         }
     }

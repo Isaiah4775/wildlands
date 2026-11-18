@@ -545,6 +545,7 @@ impl Game {
                 let target = camera.target;
                 self.world.draw_ground(target);
                 self.world.draw_nodes(target);
+                self.world.draw_targets(target);
                 self.buildings.draw();
                 self.player.draw();
                 self.world.draw_enemies(target);
