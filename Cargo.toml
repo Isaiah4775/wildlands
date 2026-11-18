@@ -1,0 +1,16 @@
+[package]
+name = "wildlands"
+version = "0.1.0"
+edition = "2021"
+description = "Wildlands - a 2D top-down survival and base-building game built with macroquad"
+
+[dependencies]
+macroquad = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
