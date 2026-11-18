@@ -683,7 +683,9 @@ impl World {
         self.spawn_timer -= dt;
         let cap = (7.0 + self.elapsed / 22.0).min(20.0) as usize;
         if self.spawn_timer <= 0.0 && self.enemies.len() < cap {
-            self.spawn_timer = (6.0 - self.elapsed * 0.012).max(2.0);
+            // Slow, long-game trickle: one creature every 10s early on, never
+            // faster than one every 3.5s no matter how long you survive.
+            self.spawn_timer = (10.0 - self.elapsed * 0.012).max(3.5);
             self.spawn_enemy(player);
         }
 
