@@ -192,9 +192,9 @@ pub const RANGED_TIERS: [RangedTier; RANGED_TIER_COUNT] = [
 ];
 
 /// Damage of a single auto rifle round, before mastery scaling.
-pub const RIFLE_BASE_DAMAGE: f32 = 14.0;
+pub const RIFLE_BASE_DAMAGE: f32 = 34.0;
 /// Damage of one birdshot pellet, before mastery scaling (nine fire per shot).
-pub const SHOTGUN_PELLET_DAMAGE: f32 = 16.0;
+pub const SHOTGUN_PELLET_DAMAGE: f32 = 40.0;
 
 /// Stats for any melee level. Past Sapphire the name stays the same and the
 /// numbers keep climbing forever.

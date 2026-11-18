@@ -12,7 +12,7 @@ use crate::progression::{
     RANGED_UNLOCK_MELEE_LEVEL,
 };
 use crate::world::{
-    draw_text_center, rot_vec, text_width, with_alpha, World, OUTLINE, TEXT_SCALE, WORLD_SIZE,
+    draw_text_center, rot_vec, text_px, text_width, with_alpha, World, OUTLINE, WORLD_SIZE,
 };
 
 pub const GOLD: Color = Color::new(0.98, 0.82, 0.36, 1.0);
@@ -41,17 +41,20 @@ fn bar(x: f32, y: f32, w: f32, h: f32, frac: f32, fill: Color) {
 /// High-contrast text with a one-pixel drop shadow so every letter stays
 /// legible over grass, panels and busy combat.
 fn label(text: &str, x: f32, y: f32, size: f32, color: Color) {
-    let size = size * TEXT_SCALE;
-    let outline = Color::new(0.0, 0.0, 0.0, 0.92);
+    let size = text_px(size);
+    let stroke = (size * 0.09).clamp(1.5, 3.5);
+    let outline = Color::new(0.0, 0.0, 0.0, 0.95);
     for (dx, dy) in [
-        (-1.5, 0.0),
-        (1.5, 0.0),
-        (0.0, -1.5),
-        (0.0, 1.5),
-        (1.5, 1.5),
-        (-1.5, 1.5),
+        (-1.0, 0.0),
+        (1.0, 0.0),
+        (0.0, -1.0),
+        (0.0, 1.0),
+        (-1.0, -1.0),
+        (1.0, -1.0),
+        (-1.0, 1.0),
+        (1.0, 1.0),
     ] {
-        draw_text(text, x + dx, y + dy, size, outline);
+        draw_text(text, x + dx * stroke, y + dy * stroke, size, outline);
     }
     draw_text(text, x, y, size, color);
 }
@@ -377,7 +380,8 @@ fn draw_stats(player: &Player, elapsed: f32, grid_lock: bool) {
     let x = 24.0;
     let y = 24.0;
     let w = 338.0;
-    let h = 128.0;
+    // Taller than before: bigger type needs room to breathe under the bars.
+    let h = 166.0;
     draw_panel(x, y, w, h, PANEL);
     draw_rectangle(x, y, 4.0, h, GOLD);
 
@@ -394,10 +398,12 @@ fn draw_stats(player: &Player, elapsed: f32, grid_lock: bool) {
     };
     bar(x + 50.0, y + 39.0, 216.0, 15.0, hp_frac, hp_fill);
     let hp_text = format!("{:.0}/{:.0}", player.health.ceil(), player.max_health);
+    // Keep the readout on the HEALTH line: the bar itself is too narrow to hold
+    // bigger type without the numbers running across the fill.
     label(
         &hp_text,
-        x + w - 22.0 - text_width(&hp_text, 12.0),
-        y + 51.0,
+        x + w - 18.0 - text_width(&hp_text, 12.0),
+        y + 31.0,
         12.0,
         Color::new(0.96, 1.0, 0.96, 1.0),
     );
@@ -428,7 +434,7 @@ fn draw_stats(player: &Player, elapsed: f32, grid_lock: bool) {
     label(
         &survival,
         x + 18.0,
-        y + h - 25.0,
+        y + 124.0,
         12.0,
         Color::new(0.86, 0.89, 0.92, 1.0),
     );
@@ -443,7 +449,7 @@ fn draw_stats(player: &Player, elapsed: f32, grid_lock: bool) {
     label(
         &grid,
         x + 18.0,
-        y + h - 8.0,
+        y + h - 12.0,
         12.0,
         if grid_lock { GOLD } else { Color::new(0.78, 0.81, 0.85, 1.0) },
     );
@@ -874,9 +880,9 @@ fn draw_item_info(
     let (_, _, _, y0) = hotbar_geometry();
     let x = screen_width() * 0.5 - w * 0.5;
     let y = y0 - 52.0;
-    draw_rectangle(x, y, w, 42.0, Color::new(0.04, 0.06, 0.09, 0.92));
-    draw_rectangle_lines(x, y, w, 42.0, 2.0, Color::new(1.0, 1.0, 1.0, 0.16));
-    label(&text, x + 16.0, y + 27.0, 15.0, Color::new(0.96, 0.98, 1.0, 1.0));
+    draw_rectangle(x, y, w, 50.0, Color::new(0.04, 0.06, 0.09, 0.92));
+    draw_rectangle_lines(x, y, w, 50.0, 2.0, Color::new(1.0, 1.0, 1.0, 0.16));
+    label(&text, x + 16.0, y + 33.0, 15.0, Color::new(0.96, 0.98, 1.0, 1.0));
     if !status.0.is_empty() {
         label(
             status.0,
@@ -1591,9 +1597,9 @@ pub fn draw_start_menu(time: f32, has_save: bool) {
         );
     }
 
-    let px = sw * 0.5 - 390.0;
+    let px = sw * 0.5 - 450.0;
     let py = 422.0;
-    let pw = 820.0;
+    let pw = 900.0;
     let ph = 204.0;
     draw_panel(px, py, pw, ph, Color::new(0.05, 0.08, 0.10, 0.86));
     label("CONTROLS", px + 20.0, py + 26.0, 15.0, GOLD);
@@ -1612,12 +1618,14 @@ pub fn draw_start_menu(time: f32, has_save: bool) {
     for (i, (key, action)) in rows.iter().enumerate() {
         let col = i / 5;
         let row = i % 5;
-        let cx = px + 24.0 + col as f32 * 400.0;
-        let cy = py + 52.0 + row as f32 * 28.0;
+        let cx = px + 24.0 + col as f32 * 450.0;
+        let cy = py + 52.0 + row as f32 * 30.0;
         label(key, cx, cy, 14.0, Color::new(0.99, 0.93, 0.72, 1.0));
+        // Wide gap: the longer key strings would otherwise run into the action
+        // column now that the type is roughly a third larger.
         label(
             action,
-            cx + 164.0,
+            cx + 232.0,
             cy,
             14.0,
             Color::new(0.88, 0.92, 0.94, 1.0),

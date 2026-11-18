@@ -14,7 +14,17 @@ pub const OUTLINE: Color = Color::new(0.05, 0.06, 0.09, 1.0);
 
 /// Global text scale applied by every text helper. Larger type plus a heavy
 /// dark outline keeps the HUD readable over grass, panels and combat effects.
-pub const TEXT_SCALE: f32 = 1.2;
+pub const TEXT_SCALE: f32 = 1.7;
+
+/// Nothing is allowed to render smaller than this, in pixels. The window is a
+/// fixed 1280x720 buffer that macOS then upscales, so small type smears into
+/// mush; every text helper routes its size through here.
+pub const MIN_TEXT_PX: f32 = 17.0;
+
+/// Final on-screen font size for a requested base size.
+pub fn text_px(size: f32) -> f32 {
+    (size * TEXT_SCALE).max(MIN_TEXT_PX)
+}
 
 // ---------------------------------------------------------------------------
 // Small drawing helpers shared by every module.
@@ -97,12 +107,12 @@ pub fn draw_bar(top_left_center: Vec2, width: f32, height: f32, frac: f32, fill:
 }
 
 pub fn text_width(text: &str, size: f32) -> f32 {
-    measure_text(text, None, (size * TEXT_SCALE) as u16, 1.0).width
+    measure_text(text, None, text_px(size) as u16, 1.0).width
 }
 
 pub fn draw_text_outlined(text: &str, x: f32, y: f32, size: f32, color: Color, outline: Color) {
-    let size = size * TEXT_SCALE;
-    let stroke = (size * 0.10).clamp(1.5, 3.0);
+    let size = text_px(size);
+    let stroke = (size * 0.09).clamp(1.5, 3.5);
     for (dx, dy) in [
         (-1.0, 0.0),
         (1.0, 0.0),
@@ -127,7 +137,7 @@ pub fn draw_text_center(
     outline: Option<Color>,
 ) {
     let x = center_x - text_width(text, size) * 0.5;
-    let y = center_y + size * TEXT_SCALE * 0.35;
+    let y = center_y + text_px(size) * 0.35;
     match outline {
         Some(o) => {
             draw_text_outlined(text, x, y, size, color, o);
