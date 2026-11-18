@@ -345,6 +345,9 @@ pub struct Enemy {
 /// before it gives up and goes back to grazing.
 const LOSE_INTEREST_TIME: f32 = 5.0;
 
+/// Never more than this many wolves, bears and raiders alive at once.
+const MAX_ENEMIES: usize = 10;
+
 impl Enemy {
     pub fn radius(&self) -> f32 {
         self.kind.radius()
@@ -735,7 +738,8 @@ impl World {
         self.scale_enemy_health(player);
 
         self.spawn_timer -= dt;
-        let cap = (7.0 + self.elapsed / 22.0).min(20.0) as usize;
+        // Hard ceiling on how many creatures can be alive at once.
+        let cap = MAX_ENEMIES;
         if self.spawn_timer <= 0.0 && self.enemies.len() < cap {
             // Slow, long-game trickle: one creature every 10s early on, never
             // faster than one every 3.5s no matter how long you survive.
