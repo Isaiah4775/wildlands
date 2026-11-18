@@ -477,6 +477,9 @@ pub struct World {
     particles: Vec<Particle>,
     decor: Vec<Decor>,
     pub targets: Vec<PracticeTarget>,
+    /// Session-only practice score, cleared from the range sign.
+    pub practice_hits: u32,
+    pub practice_bullseyes: u32,
     pub spawn_timer: f32,
     pub elapsed: f32,
     /// Highest mastery level that living enemies have been scaled to.
@@ -496,6 +499,8 @@ impl World {
             particles: Vec::new(),
             decor: Vec::new(),
             targets: Vec::new(),
+            practice_hits: 0,
+            practice_bullseyes: 0,
             spawn_timer: 4.0,
             elapsed: 0.0,
             hp_level: 1,
@@ -1334,7 +1339,12 @@ impl World {
         let tpos = self.targets[ti].pos;
         self.targets[ti].flash = 0.25;
         self.targets[ti].pending_hits += 1;
-        self.targets[ti].pending_bullseye |= tpos.distance(pos) < 7.5;
+        let bullseye = tpos.distance(pos) < 7.5;
+        self.targets[ti].pending_bullseye |= bullseye;
+        self.practice_hits += 1;
+        if bullseye {
+            self.practice_bullseyes += 1;
+        }
         self.particles.extend(burst(pos, spark, 4, 120.0, 2.2, 140.0));
         true
     }
@@ -1871,6 +1881,16 @@ impl World {
         }
     }
 
+    /// Where the range sign stands: a step east of the middle target.
+    pub fn sign_pos(&self) -> Vec2 {
+        let mid = self
+            .targets
+            .get(1)
+            .map(|t| t.pos)
+            .unwrap_or(vec2(WORLD_SIZE * 0.5, WORLD_SIZE * 0.5));
+        mid + vec2(130.0, 0.0)
+    }
+
     pub fn draw_targets(&self, camera_target: Vec2) {
         let (min, max) = view_bounds(camera_target);
         for t in self.targets.iter() {
@@ -1898,6 +1918,69 @@ impl World {
                 let a = (t.flash / 0.25).clamp(0.0, 1.0);
                 draw_circle_lines(p.x, p.y, 23.0, 2.0, Color::new(1.0, 0.9, 0.5, a));
             }
+        }
+
+        // Scoreboard on the back edge of the range.
+        let sign = self.sign_pos();
+        if on_screen(sign, min, max, 160.0) {
+            shadow(sign + vec2(4.0, 10.0), 70.0);
+            for dx in [-84.0, 84.0] {
+                draw_rectangle(sign.x + dx - 4.0, sign.y - 4.0, 8.0, 60.0, OUTLINE);
+                draw_rectangle(
+                    sign.x + dx - 2.0,
+                    sign.y - 4.0,
+                    4.0,
+                    58.0,
+                    Color::new(0.42, 0.30, 0.17, 1.0),
+                );
+            }
+            draw_rectangle(sign.x - 104.0, sign.y - 58.0, 208.0, 84.0, OUTLINE);
+            draw_rectangle(
+                sign.x - 100.0,
+                sign.y - 54.0,
+                200.0,
+                76.0,
+                Color::new(0.31, 0.23, 0.15, 1.0),
+            );
+            draw_rectangle(
+                sign.x - 100.0,
+                sign.y - 54.0,
+                200.0,
+                3.0,
+                Color::new(0.46, 0.34, 0.21, 1.0),
+            );
+            draw_text_center(
+                "PRACTICE RANGE",
+                sign.x,
+                sign.y - 44.0,
+                9.0,
+                Color::new(0.95, 0.88, 0.62, 1.0),
+                Some(OUTLINE),
+            );
+            draw_text_center(
+                &format!("HITS  {}", self.practice_hits),
+                sign.x,
+                sign.y - 22.0,
+                10.0,
+                Color::new(0.98, 0.96, 0.9, 1.0),
+                Some(OUTLINE),
+            );
+            draw_text_center(
+                &format!("BULLSEYES  {}", self.practice_bullseyes),
+                sign.x,
+                sign.y,
+                10.0,
+                Color::new(1.0, 0.85, 0.4, 1.0),
+                Some(OUTLINE),
+            );
+            draw_text_center(
+                "T  RESET",
+                sign.x,
+                sign.y + 22.0,
+                8.0,
+                Color::new(0.74, 0.79, 0.83, 1.0),
+                Some(OUTLINE),
+            );
         }
     }
 

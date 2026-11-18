@@ -359,6 +359,13 @@ impl Game {
             );
         }
 
+        if is_key_pressed(KeyCode::T) {
+            self.world.practice_hits = 0;
+            self.world.practice_bullseyes = 0;
+            self.progress
+                .show_banner("PRACTICE RESET", "Range scoreboard cleared");
+        }
+
         let mouse_world = self.mouse_world();
         if is_mouse_button_pressed(MouseButton::Right) && ui::hotbar_slot_at(mouse).is_none() {
             match self.buildings.demolish(mouse_world, &mut self.player) {
