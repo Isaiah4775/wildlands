@@ -276,9 +276,9 @@ impl EnemyKind {
 
     pub fn speed(self) -> f32 {
         match self {
-            EnemyKind::Wolf => 132.0,
-            EnemyKind::Bear => 92.0,
-            EnemyKind::Raider => 116.0,
+            EnemyKind::Wolf => 150.0,
+            EnemyKind::Bear => 106.0,
+            EnemyKind::Raider => 124.0,
         }
     }
 
@@ -294,9 +294,9 @@ impl EnemyKind {
     /// still has to be clear of trees and boulders.
     pub fn sight_range(self) -> f32 {
         match self {
-            EnemyKind::Wolf => 600.0,
-            EnemyKind::Bear => 450.0,
-            EnemyKind::Raider => 620.0,
+            EnemyKind::Wolf => 720.0,
+            EnemyKind::Bear => 560.0,
+            EnemyKind::Raider => 700.0,
         }
     }
 
@@ -304,9 +304,9 @@ impl EnemyKind {
     /// even with trees and boulders in the way.
     pub fn hearing_range(self) -> f32 {
         match self {
-            EnemyKind::Wolf => 260.0,
-            EnemyKind::Bear => 210.0,
-            EnemyKind::Raider => 280.0,
+            EnemyKind::Wolf => 340.0,
+            EnemyKind::Bear => 300.0,
+            EnemyKind::Raider => 380.0,
         }
     }
 
@@ -353,7 +353,7 @@ pub struct Enemy {
 
 /// How long an animal keeps hunting after it loses sight of the survivor
 /// before it gives up and goes back to grazing.
-const LOSE_INTEREST_TIME: f32 = 7.0;
+const LOSE_INTEREST_TIME: f32 = 12.0;
 
 /// Never more than this many wolves, bears and raiders alive at once.
 const MAX_ENEMIES: usize = 10;
@@ -831,7 +831,9 @@ impl World {
                 }
             }
 
-            let attack_player = hunt && dist_player < er + player.radius + 12.0;
+            // Attacks still need eyes on the survivor: something heard through
+            // the trees will close in, but it cannot hit what it cannot see.
+            let attack_player = hunt && sees_player && dist_player < er + player.radius + 12.0;
             let mut attack_building: Option<usize> = None;
             if hunt && !attack_player {
                 if let Some(bi) = blocking {
@@ -974,7 +976,7 @@ impl World {
             }
 
             if attack_player && self.enemies[i].attack_cd <= 0.0 {
-                self.enemies[i].attack_cd = 0.95;
+                self.enemies[i].attack_cd = 0.8;
                 let dmg = kind.damage() * player.enemy_damage_multiplier();
                 let lost = player.take_damage(dmg);
                 if lost > 0.0 {
@@ -1010,7 +1012,12 @@ impl World {
             if smart && !attack_player && attack_building.is_none() {
                 let e = &mut self.enemies[i];
                 e.throw_cd -= dt;
-                if e.throw_cd <= 0.0 && dist_player < 430.0 && dist_player > 70.0 && !path_blocked {
+                if e.throw_cd <= 0.0
+                    && sees_player
+                    && dist_player < 430.0
+                    && dist_player > 70.0
+                    && !path_blocked
+                {
                     e.throw_cd = 3.4;
                     let aim = (player.pos - epos).normalize_or_zero();
                     e.facing = aim.y.atan2(aim.x);
