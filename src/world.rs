@@ -336,7 +336,14 @@ pub struct Enemy {
     /// Defaulted so saves written before detection existed still load.
     #[serde(default)]
     pub alerted: bool,
+    /// Seconds since this animal last had eyes on the survivor.
+    #[serde(default)]
+    pub lost_timer: f32,
 }
+
+/// How long an animal keeps hunting after it loses sight of the survivor
+/// before it gives up and goes back to grazing.
+const LOSE_INTEREST_TIME: f32 = 5.0;
 
 impl Enemy {
     pub fn radius(&self) -> f32 {
@@ -653,6 +660,7 @@ impl World {
             throw_cd: gen_range(2.4, 3.8),
             flank: if gen_range(0.0, 1.0) < 0.5 { -1.0 } else { 1.0 },
             alerted: false,
+            lost_timer: 0.0,
         });
     }
 
@@ -747,19 +755,32 @@ impl World {
             let perp = vec2(-dir_to_player.y, dir_to_player.x);
 
             // Animals only become a threat once they have spotted you: inside
-            // their sight range and with a clear line through the trees.
+            // their sight range and with a clear line through the trees. Break
+            // that line for long enough and they lose interest and wander off.
             let sees_player =
                 dist_player < kind.sight_range() && self.clear_path(epos, player.pos);
-            if sees_player && !self.enemies[i].alerted {
-                self.enemies[i].alerted = true;
-                if kind != EnemyKind::Raider {
-                    self.floaters.push(Floater {
-                        pos: epos + vec2(0.0, -30.0),
-                        text: "!".to_string(),
-                        color: Color::new(1.0, 0.85, 0.35, 1.0),
-                        life: 0.8,
-                        max_life: 0.8,
-                    });
+            // At touching distance there is nothing left to hide behind.
+            let pressed = dist_player < er + player.radius + 60.0;
+            if sees_player || pressed {
+                self.enemies[i].lost_timer = 0.0;
+                if !self.enemies[i].alerted {
+                    self.enemies[i].alerted = true;
+                    if kind != EnemyKind::Raider {
+                        self.floaters.push(Floater {
+                            pos: epos + vec2(0.0, -30.0),
+                            text: "!".to_string(),
+                            color: Color::new(1.0, 0.85, 0.35, 1.0),
+                            life: 0.8,
+                            max_life: 0.8,
+                        });
+                    }
+                }
+            } else if self.enemies[i].alerted && kind != EnemyKind::Raider {
+                self.enemies[i].lost_timer += dt;
+                if self.enemies[i].lost_timer > LOSE_INTEREST_TIME {
+                    // Hunt over: back to grazing until spotted again.
+                    self.enemies[i].alerted = false;
+                    self.enemies[i].lost_timer = 0.0;
                 }
             }
             let hunt = kind == EnemyKind::Raider || self.enemies[i].alerted;
