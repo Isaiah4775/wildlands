@@ -1,0 +1,46 @@
+name: macOS app
+
+# Builds Wildlands.app and attaches it to a release, so the game can be
+# downloaded and opened by double-clicking without a terminal or Rust toolchain.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release tag to publish the app under
+        required: true
+        default: v0.1.0
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Assemble Wildlands.app
+        run: bash packaging/make-app.sh
+
+      - name: Publish release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ github.event.inputs.version || github.ref_name }}
+        run: |
+          set -euo pipefail
+          ASSET="$(ls dist/*.zip | head -1)"
+          echo "publishing $ASSET to release $VERSION"
+          gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$VERSION" --repo "$GITHUB_REPOSITORY" \
+                 --title "Wildlands $VERSION" \
+                 --notes "Download the zip, unzip it, and open Wildlands.app."
+          gh release upload "$VERSION" "$ASSET" --repo "$GITHUB_REPOSITORY" --clobber
+          gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | .name + " " + (.size|tostring) + " bytes"'
