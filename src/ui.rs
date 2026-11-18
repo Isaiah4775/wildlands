@@ -4,7 +4,9 @@ use macroquad::prelude::*;
 use std::f32::consts::PI;
 
 use crate::building::{BuildKind, BuildingManager, Ghost};
-use crate::player::{hotbar, Player, SlotItem, MELEE_TIERS, RANGED_TIERS};
+use crate::player::{
+    hotbar, Player, SlotItem, MELEE_TIERS, RANGED_TIERS, RIFLE_BASE_DAMAGE, SHOTGUN_PELLET_DAMAGE,
+};
 use crate::progression::{
     Progression, UnlockId, MELEE_THRESHOLDS, RANGED_THRESHOLDS,
     RANGED_UNLOCK_MELEE_LEVEL,
@@ -831,14 +833,14 @@ fn draw_item_info(
             "{}   ·   Lv {}   ·   {:.1} dmg   ·   {:.1} rounds/s",
             player.gun_name(false),
             player.combat_level(),
-            player.gun_damage(7.0),
+            player.gun_damage(RIFLE_BASE_DAMAGE),
             1.0 / player.gun_cooldown(0.10),
         ),
         SlotItem::Shotgun => format!(
             "{}   ·   Lv {}   ·   9 pellets x {:.1} dmg   ·   {:.2}s per shot",
             player.gun_name(true),
             player.combat_level(),
-            player.gun_damage(8.0),
+            player.gun_damage(SHOTGUN_PELLET_DAMAGE),
             player.gun_cooldown(0.90),
         ),
         SlotItem::Food => format!(

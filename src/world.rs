@@ -6,7 +6,7 @@ use macroquad::rand::gen_range;
 use std::f32::consts::{PI, TAU};
 
 use crate::building::BuildingManager;
-use crate::player::Player;
+use crate::player::{Player, RIFLE_BASE_DAMAGE, SHOTGUN_PELLET_DAMAGE};
 use crate::progression::Progression;
 
 pub const WORLD_SIZE: f32 = 3200.0;
@@ -987,7 +987,7 @@ impl World {
         self.bullets.push(Bullet {
             pos: player.pos + dir * 26.0,
             vel: dir * 1180.0 * speed_scale,
-            damage: player.gun_damage(7.0),
+            damage: player.gun_damage(RIFLE_BASE_DAMAGE),
             life: 0.62,
             tracer: 1.0,
         });
@@ -1009,7 +1009,7 @@ impl World {
             self.bullets.push(Bullet {
                 pos: player.pos + dir * 24.0,
                 vel: dir * speed,
-                damage: player.gun_damage(8.0),
+                damage: player.gun_damage(SHOTGUN_PELLET_DAMAGE),
                 life: 300.0 / speed,
                 tracer: 0.45,
             });
