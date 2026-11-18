@@ -290,6 +290,16 @@ impl EnemyKind {
         }
     }
 
+    /// How close the survivor can get before this creature notices them. Sight
+    /// still has to be clear of trees and boulders.
+    pub fn sight_range(self) -> f32 {
+        match self {
+            EnemyKind::Wolf => 470.0,
+            EnemyKind::Bear => 340.0,
+            EnemyKind::Raider => 540.0,
+        }
+    }
+
     pub fn radius(self) -> f32 {
         match self {
             EnemyKind::Wolf => 16.0,
@@ -322,6 +332,10 @@ pub struct Enemy {
     pub throw_cd: f32,
     /// -1 or 1: which side this enemy prefers to flank from.
     pub flank: f32,
+    /// Animals ignore the survivor until they have actually spotted them.
+    /// Defaulted so saves written before detection existed still load.
+    #[serde(default)]
+    pub alerted: bool,
 }
 
 impl Enemy {
@@ -582,6 +596,27 @@ impl World {
         });
     }
 
+    /// True when nothing solid - tree, boulder or iron outcrop - sits on the
+    /// line between two points.
+    fn clear_path(&self, from: Vec2, to: Vec2) -> bool {
+        let delta = to - from;
+        let len_sq = delta.length_squared();
+        if len_sq < 1.0 {
+            return true;
+        }
+        for n in self.nodes.iter() {
+            if !n.kind.solid() {
+                continue;
+            }
+            let t = ((n.pos - from).dot(delta) / len_sq).clamp(0.0, 1.0);
+            let closest = from + delta * t;
+            if n.pos.distance(closest) < n.radius * 0.7 + 12.0 {
+                return false;
+            }
+        }
+        true
+    }
+
     fn spawn_enemy(&mut self, player: &Player) {
         let player_pos = player.pos;
         let mut kind = EnemyKind::Wolf;
@@ -615,8 +650,9 @@ impl World {
             attack_cd: gen_range(0.3, 1.0),
             hit_flash: 0.0,
             bleed: 0.0,
-            throw_cd: gen_range(0.8, 2.2),
+            throw_cd: gen_range(2.4, 3.8),
             flank: if gen_range(0.0, 1.0) < 0.5 { -1.0 } else { 1.0 },
+            alerted: false,
         });
     }
 
@@ -710,6 +746,24 @@ impl World {
             let dir_to_player = to_player.normalize_or_zero();
             let perp = vec2(-dir_to_player.y, dir_to_player.x);
 
+            // Animals only become a threat once they have spotted you: inside
+            // their sight range and with a clear line through the trees.
+            let sees_player =
+                dist_player < kind.sight_range() && self.clear_path(epos, player.pos);
+            if sees_player && !self.enemies[i].alerted {
+                self.enemies[i].alerted = true;
+                if kind != EnemyKind::Raider {
+                    self.floaters.push(Floater {
+                        pos: epos + vec2(0.0, -30.0),
+                        text: "!".to_string(),
+                        color: Color::new(1.0, 0.85, 0.35, 1.0),
+                        life: 0.8,
+                        max_life: 0.8,
+                    });
+                }
+            }
+            let hunt = kind == EnemyKind::Raider || self.enemies[i].alerted;
+
             // Only barriers genuinely on the path are worth breaking. Anything
             // beside the route is stepped around, like a person would do.
             let mut path_blocked = false;
@@ -739,9 +793,9 @@ impl World {
                 }
             }
 
-            let attack_player = dist_player < er + player.radius + 12.0;
+            let attack_player = hunt && dist_player < er + player.radius + 12.0;
             let mut attack_building: Option<usize> = None;
-            if !attack_player {
+            if hunt && !attack_player {
                 if let Some(bi) = blocking {
                     if blocking_dist < er + 44.0 {
                         attack_building = Some(bi);
@@ -752,7 +806,11 @@ impl World {
             let smart = kind == EnemyKind::Raider;
             let mut desired = Vec2::ZERO;
 
-            if attack_player {
+            if !hunt {
+                // Unaware animals graze: a lazy drift, no interest in you.
+                let t = self.elapsed * 0.6 + i as f32 * 2.1;
+                desired = vec2(t.sin(), (t * 1.3).cos()) * 0.5;
+            } else if attack_player {
                 self.enemies[i].facing = dir_to_player.y.atan2(dir_to_player.x);
             } else if let Some(bi) = attack_building {
                 let bpos = buildings.items[bi].pos;
@@ -826,7 +884,8 @@ impl World {
             }
 
             if desired.length_squared() > 1.0 {
-                let step = desired.normalize() * kind.speed() * dt;
+                let pace = if hunt { 1.0 } else { 0.35 };
+                let step = desired.normalize() * kind.speed() * pace * dt;
                 let mut np = epos + step;
                 np.x = np.x.clamp(50.0, WORLD_SIZE - 50.0);
                 np.y = np.y.clamp(50.0, WORLD_SIZE - 50.0);
@@ -914,7 +973,7 @@ impl World {
                 let e = &mut self.enemies[i];
                 e.throw_cd -= dt;
                 if e.throw_cd <= 0.0 && dist_player < 430.0 && dist_player > 70.0 && !path_blocked {
-                    e.throw_cd = 1.9;
+                    e.throw_cd = 3.4;
                     let aim = (player.pos - epos).normalize_or_zero();
                     e.facing = aim.y.atan2(aim.x);
                     new_shots.push(EnemyShot {
@@ -1048,6 +1107,8 @@ impl World {
                 let dmg = self.bullets[bi].damage;
                 self.enemies[ei].hp -= dmg;
                 self.enemies[ei].hit_flash = 0.12;
+                // Being shot wakes an animal up, clear line of sight or not.
+                self.enemies[ei].alerted = true;
                 self.bullets[bi].life = 0.0;
                 progress.register_ranged_hit();
                 let epos = self.enemies[ei].pos;
@@ -1112,6 +1173,7 @@ impl World {
                 let dmg = self.arrows[ai].damage;
                 self.enemies[ei].hp -= dmg;
                 self.enemies[ei].hit_flash = 0.16;
+                self.enemies[ei].alerted = true;
                 self.arrows[ai].life = 0.0;
                 progress.register_ranged_hit();
                 let epos = self.enemies[ei].pos;
@@ -1225,6 +1287,7 @@ impl World {
                 let dmg = stats.damage * gen_range(0.9, 1.12);
                 e.hp -= dmg;
                 e.hit_flash = 0.18;
+                e.alerted = true;
                 if dist > 1.0 {
                     e.pos += off / dist * 8.0;
                 }
