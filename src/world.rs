@@ -456,6 +456,11 @@ pub struct PracticeTarget {
     pub pos: Vec2,
     /// Counts down after a hit so the face flashes on impact.
     pub flash: f32,
+    /// Impacts landed on this target during the current frame. A shotgun
+    /// shell puts nine pellets into the face at once, so they are merged into
+    /// a single label instead of stacking nine of them.
+    pending_hits: u32,
+    pending_bullseye: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -620,6 +625,8 @@ impl World {
             self.targets.push(PracticeTarget {
                 pos: center + off,
                 flash: 0.0,
+                pending_hits: 0,
+                pending_bullseye: false,
             });
         }
         let spots: Vec<Vec2> = self.targets.iter().map(|t| t.pos).collect();
@@ -775,6 +782,7 @@ impl World {
         self.update_arrows(dt, player, progress);
         self.update_bullets(dt, player, progress);
         self.update_enemy_shots(dt, player);
+        self.flush_target_hits();
         self.scale_enemy_health(player);
 
         self.spawn_timer -= dt;
@@ -1325,20 +1333,39 @@ impl World {
         };
         let tpos = self.targets[ti].pos;
         self.targets[ti].flash = 0.25;
-        let bullseye = tpos.distance(pos) < 7.5;
+        self.targets[ti].pending_hits += 1;
+        self.targets[ti].pending_bullseye |= tpos.distance(pos) < 7.5;
         self.particles.extend(burst(pos, spark, 4, 120.0, 2.2, 140.0));
-        self.floaters.push(Floater {
-            pos: tpos + vec2(0.0, -34.0),
-            text: if bullseye { "BULLSEYE" } else { "HIT" }.to_string(),
-            color: if bullseye {
-                Color::new(1.0, 0.86, 0.35, 1.0)
-            } else {
-                Color::new(0.92, 0.94, 0.98, 1.0)
-            },
-            life: 0.7,
-            max_life: 0.7,
-        });
         true
+    }
+
+    /// One label per target per frame: a shell that lands nine pellets reads as
+    /// a single impact, not nine stacked words.
+    fn flush_target_hits(&mut self) {
+        for ti in 0..self.targets.len() {
+            let hits = self.targets[ti].pending_hits;
+            if hits == 0 {
+                continue;
+            }
+            self.targets[ti].pending_hits = 0;
+            let bullseye = std::mem::replace(&mut self.targets[ti].pending_bullseye, false);
+            let tpos = self.targets[ti].pos;
+            self.floaters.push(Floater {
+                pos: tpos + vec2(0.0, -34.0),
+                text: match (hits, bullseye) {
+                    (1, true) => "BULLSEYE".to_string(),
+                    (1, false) => "HIT".to_string(),
+                    (n, _) => format!("{} HITS", n),
+                },
+                color: if bullseye {
+                    Color::new(1.0, 0.86, 0.35, 1.0)
+                } else {
+                    Color::new(0.92, 0.94, 0.98, 1.0)
+                },
+                life: 0.7,
+                max_life: 0.7,
+            });
+        }
     }
 
     fn update_enemy_shots(&mut self, dt: f32, player: &mut Player) {
