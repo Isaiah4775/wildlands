@@ -1,15 +1,72 @@
-//! The 3200x3200 world: procedural terrain, resource nodes, hostile wildlife,
-//! collision helpers and combat resolution.
+//! The endless wildlands: procedurally streamed chunks of terrain, water,
+//! resource nodes and hostile wildlife, plus collision and combat resolution.
 
 use macroquad::prelude::*;
 use macroquad::rand::gen_range;
+use std::collections::HashMap;
 use std::f32::consts::{PI, TAU};
 
 use crate::building::BuildingManager;
 use crate::player::{Player, RIFLE_BASE_DAMAGE, SHOTGUN_PELLET_DAMAGE};
 use crate::progression::Progression;
 
+/// Size of the home clearing, used to keep the camp centred on the map.
 pub const WORLD_SIZE: f32 = 3200.0;
+
+/// Where the survivor starts: the camp, the practice range and the starter
+/// resources all sit here. The rest of the world continues forever.
+pub fn home() -> Vec2 {
+    vec2(WORLD_SIZE * 0.5, WORLD_SIZE * 0.5)
+}
+
+/// Side length of one streamed chunk of world.
+pub const CHUNK: f32 = 640.0;
+
+/// How many chunks are kept loaded in each direction around the survivor.
+const CHUNK_MARGIN: i32 = 2;
+
+/// Which chunk contains a point.
+pub fn chunk_of(pos: Vec2) -> (i32, i32) {
+    (
+        (pos.x / CHUNK).floor() as i32,
+        (pos.y / CHUNK).floor() as i32,
+    )
+}
+
+/// Stable identity for a generated node, so mining is remembered when a chunk
+/// unloads and is generated again later.
+pub fn node_key(pos: Vec2) -> (i32, i32) {
+    (pos.x.round() as i32, pos.y.round() as i32)
+}
+
+/// Deterministic per-chunk random source: the same chunk always grows the same
+/// plants, pools and outcrops, whenever it is streamed back in.
+struct ChunkRng(u64);
+
+impl ChunkRng {
+    fn new(cx: i32, cy: i32) -> Self {
+        let mut h: u64 = 0x9E37_79B9_7F4A_7C15;
+        h ^= (cx as i64 as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93);
+        h ^= (cy as i64 as u64).wrapping_mul(0xA24B_AED4_963E_E407);
+        Self(h | 1)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    fn f32(&mut self) -> f32 {
+        (self.next_u64() >> 40) as f32 / (1u64 << 24) as f32
+    }
+
+    fn range(&mut self, a: f32, b: f32) -> f32 {
+        a + (b - a) * self.f32()
+    }
+}
 pub const OUTLINE: Color = Color::new(0.05, 0.06, 0.09, 1.0);
 
 /// Global text scale applied by every text helper. Larger type plus a heavy
@@ -709,6 +766,11 @@ pub struct World {
     pub targets: Vec<PracticeTarget>,
     /// Ponds, oases and river stretches. Impassable, and impossible to build on.
     pub water: Vec<Water>,
+    /// Chunk the loaded content was last built around.
+    stream_center: Option<(i32, i32)>,
+    /// Hit points remembered for nodes outside the loaded block, keyed by their
+    /// rounded world position. Zero means that spot has been mined out.
+    node_hp: HashMap<(i32, i32), f32>,
     /// Biome the survivor is standing in, so entering a region can be announced.
     last_biome: Biome,
     /// Session-only practice score, cleared from the range sign.
@@ -734,6 +796,8 @@ impl World {
             decor: Vec::new(),
             targets: Vec::new(),
             water: Vec::new(),
+            stream_center: None,
+            node_hp: HashMap::new(),
             last_biome: Biome::Meadow,
             practice_hits: 0,
             practice_bullseyes: 0,
@@ -751,9 +815,20 @@ impl World {
         enemies: Vec<Enemy>,
         elapsed: f32,
         hp_level: usize,
+        node_hp: Vec<((i32, i32), f32)>,
+        player_pos: Vec2,
     ) -> Self {
         let mut world = Self::new();
-        world.nodes = nodes;
+        // Saves from before the map streamed carried a flat list of nodes. Keep
+        // whatever damage they remember as overrides for the generator.
+        for n in nodes {
+            if n.hp < n.max_hp {
+                world.node_hp.insert(node_key(n.pos), n.hp);
+            }
+        }
+        for (key, hp) in node_hp {
+            world.node_hp.insert(key, hp);
+        }
         world.enemies = enemies;
         // Saves from before biomes have no home point; treat where they are
         // standing as where they live.
@@ -767,6 +842,9 @@ impl World {
         world.hp_level = hp_level.max(1);
         world.spawn_timer = 4.0;
         world.footstep_timer = 0.0;
+        // Rebuild the ground around wherever the survivor was left.
+        world.stream_center = None;
+        world.stream(player_pos);
         world
     }
 
@@ -780,6 +858,18 @@ impl World {
 
     pub fn saved_hp_level(&self) -> usize {
         self.hp_level
+    }
+
+    /// Every node whose condition differs from its pristine state, so mining
+    /// survives a reload even if the chunk is not currently loaded.
+    pub fn node_overrides(&self) -> Vec<((i32, i32), f32)> {
+        let mut all = self.node_hp.clone();
+        for n in self.nodes.iter() {
+            if n.hp < n.max_hp {
+                all.insert(node_key(n.pos), n.hp);
+            }
+        }
+        all.into_iter().collect()
     }
 
     pub fn float_text(&mut self, pos: Vec2, text: &str, color: Color) {
@@ -797,54 +887,91 @@ impl World {
     }
 
     fn generate(&mut self) {
-        let center = vec2(WORLD_SIZE * 0.5, WORLD_SIZE * 0.5);
-
-        // Water first, so nothing else is ever placed inside a lake or river.
-        self.water.clear();
-        // Savanna watering hole, south-east of the camp.
-        self.water.push(Water {
-            pos: center + vec2(700.0, 640.0),
-            radius: 190.0,
-            seed: 1.7,
-        });
-        self.water.push(Water {
-            pos: center + vec2(884.0, 772.0),
-            radius: 132.0,
-            seed: 4.1,
-        });
-        // Desert oasis, to the north-west.
-        self.water.push(Water {
-            pos: center + vec2(-420.0, -1080.0),
-            radius: 126.0,
-            seed: 2.6,
-        });
-        // A river winding through the rainforest in the south-west.
-        for (i, (x, y)) in [
-            (-900.0, 560.0),
-            (-1050.0, 720.0),
-            (-1220.0, 900.0),
-            (-1400.0, 1100.0),
-        ]
-        .iter()
-        .enumerate()
-        {
-            self.water.push(Water {
-                pos: center + vec2(*x, *y),
-                radius: 118.0 - i as f32 * 6.0,
-                seed: 3.0 + i as f32,
+        // The practice range is the only fixed landmark. Everything else is
+        // streamed in chunk by chunk around the survivor, forever.
+        let center = home();
+        self.targets.clear();
+        for off in [vec2(300.0, -170.0), vec2(330.0, 0.0), vec2(300.0, 170.0)] {
+            self.targets.push(PracticeTarget {
+                pos: center + off,
+                flash: 0.0,
+                pending_hits: 0,
+                pending_bullseye: false,
             });
         }
+        self.stream_center = None;
+        self.stream(center);
+    }
 
+    /// Rebuild the world around a point when the survivor reaches a new chunk.
+    /// Chunks that fall out of range are dropped, with any mining remembered so
+    /// a depleted outcrop never quietly grows back.
+    pub fn stream(&mut self, around: Vec2) {
+        let cc = chunk_of(around);
+        if self.stream_center == Some(cc) {
+            return;
+        }
+        for n in self.nodes.iter() {
+            if n.hp < n.max_hp {
+                self.node_hp.insert(node_key(n.pos), n.hp);
+            }
+        }
+        self.stream_center = Some(cc);
+        self.nodes.clear();
         self.decor.clear();
-        for _ in 0..1500 {
-            let pos = vec2(
-                gen_range(20.0, WORLD_SIZE - 20.0),
-                gen_range(20.0, WORLD_SIZE - 20.0),
-            );
+        self.water.clear();
+        for dy in -CHUNK_MARGIN..=CHUNK_MARGIN {
+            for dx in -CHUNK_MARGIN..=CHUNK_MARGIN {
+                self.load_chunk(cc.0 + dx, cc.1 + dy);
+            }
+        }
+        // Keep the practice range clear of trees and boulders.
+        let spots: Vec<Vec2> = self.targets.iter().map(|t| t.pos).collect();
+        self.nodes.retain(|n| {
+            !n.kind.solid() || spots.iter().all(|p| p.distance(n.pos) > n.radius * 0.7 + 34.0)
+        });
+    }
+
+    /// Generate one chunk. Everything comes from the chunk coordinates, so
+    /// walking away and back finds exactly the same trees, pools and rocks.
+    fn load_chunk(&mut self, cx: i32, cy: i32) {
+        let mut rng = ChunkRng::new(cx, cy);
+        let origin = vec2(cx as f32 * CHUNK, cy as f32 * CHUNK);
+
+        // Water: some chunks hold a pool, a few hold a short winding river.
+        if rng.f32() < 0.22 {
+            let pos = origin
+                + vec2(rng.range(130.0, CHUNK - 130.0), rng.range(130.0, CHUNK - 130.0));
+            let radius = rng.range(95.0, 175.0);
+            let seed = rng.range(0.0, 10.0);
+            // Never flood the camp or the practice range.
+            if pos.distance(home()) > 470.0 + radius {
+                self.water.push(Water { pos, radius, seed });
+            }
+        } else if rng.f32() < 0.30 {
+            let start = origin
+                + vec2(rng.range(120.0, CHUNK - 120.0), rng.range(120.0, CHUNK - 120.0));
+            let dir = vec2(rng.range(-1.0, 1.0), rng.range(-1.0, 1.0)).normalize_or_zero();
+            for k in 0..3 {
+                let pos = start + dir * (k as f32 * 135.0);
+                let radius = rng.range(85.0, 122.0);
+                let seed = rng.range(0.0, 10.0);
+                if pos.distance(home()) > 470.0 + radius {
+                    self.water.push(Water { pos, radius, seed });
+                }
+            }
+        }
+
+        // Ground clutter, chosen to suit the region.
+        for _ in 0..44 {
+            let pos = origin
+                + vec2(rng.range(8.0, CHUNK - 8.0), rng.range(8.0, CHUNK - 8.0));
+            let roll = rng.f32();
+            let size = rng.range(6.0, 20.0);
+            let tint = rng.f32();
             if self.is_water(pos) {
                 continue;
             }
-            let roll: f32 = gen_range(0.0, 1.0);
             let kind = match biome_at(pos) {
                 Biome::Meadow => {
                     if roll < 0.56 {
@@ -891,37 +1018,28 @@ impl World {
             };
             self.decor.push(Decor {
                 pos,
-                size: gen_range(6.0, 20.0),
+                size,
                 kind,
-                tint: gen_range(0.0, 1.0),
+                tint,
             });
         }
 
-        self.nodes.clear();
-        let mut attempts = 0;
-        while self.nodes.len() < 185 && attempts < 9000 {
-            attempts += 1;
-            let pos = vec2(
-                gen_range(110.0, WORLD_SIZE - 110.0),
-                gen_range(110.0, WORLD_SIZE - 110.0),
-            );
-            if pos.distance(center) < 150.0 {
+        // Resource nodes, spaced out inside the chunk.
+        let mut spots: Vec<Vec2> = Vec::new();
+        for _ in 0..7 {
+            let pos = origin
+                + vec2(rng.range(70.0, CHUNK - 70.0), rng.range(70.0, CHUNK - 70.0));
+            let roll = rng.f32();
+            let seed = rng.range(0.0, 10.0);
+            if self.is_water(pos) || pos.distance(home()) < 210.0 {
                 continue;
             }
-            if self.is_water(pos) {
-                continue;
-            }
-            if self
-                .nodes
-                .iter()
-                .any(|n| n.pos.distance(pos) < 78.0)
+            if spots.iter().any(|p| p.distance(pos) < 78.0)
+                || self.nodes.iter().any(|n| n.pos.distance(pos) < 78.0)
             {
                 continue;
             }
-            // Each region grows what suits it: succulents and rock in the
-            // desert, dense timber in the rainforest, thorn and acacia in the
-            // savanna.
-            let roll: f32 = gen_range(0.0, 1.0);
+            spots.push(pos);
             let kind = match biome_at(pos) {
                 Biome::Meadow => {
                     if roll < 0.24 {
@@ -966,40 +1084,45 @@ impl World {
                     }
                 }
             };
-            self.push_node(pos, kind);
+            self.push_generated_node(pos, kind, seed);
         }
 
-        // A friendly starter cluster so the first minute is never empty.
-        let starters = [
-            (vec2(-150.0, -70.0), NodeKind::Tree),
-            (vec2(130.0, 55.0), NodeKind::Berry),
-            (vec2(-60.0, 160.0), NodeKind::Rock),
-            (vec2(200.0, -120.0), NodeKind::Tree),
-            (vec2(-220.0, 90.0), NodeKind::Iron),
-            (vec2(70.0, -200.0), NodeKind::Berry),
-            (vec2(240.0, 190.0), NodeKind::Rock),
-        ];
-        for (off, kind) in starters {
-            let pos = center + off;
-            if !self.nodes.iter().any(|n| n.pos.distance(pos) < 64.0) {
-                self.push_node(pos, kind);
+        // The camp keeps its friendly starter cluster.
+        if (cx, cy) == chunk_of(home()) {
+            let c = home();
+            let starters = [
+                (vec2(-150.0, -70.0), NodeKind::Tree),
+                (vec2(130.0, 55.0), NodeKind::Berry),
+                (vec2(-60.0, 160.0), NodeKind::Rock),
+                (vec2(200.0, -120.0), NodeKind::Tree),
+                (vec2(-220.0, 90.0), NodeKind::Iron),
+                (vec2(70.0, -200.0), NodeKind::Berry),
+                (vec2(240.0, 190.0), NodeKind::Rock),
+            ];
+            for (i, (off, kind)) in starters.into_iter().enumerate() {
+                let pos = c + off;
+                if !self.nodes.iter().any(|n| n.pos.distance(pos) < 64.0) {
+                    self.push_generated_node(pos, kind, i as f32 * 1.7);
+                }
             }
         }
+    }
 
-        // A practice range a few paces east of the starting clearing, clear of
-        // trees so there is an open line from the camp.
-        self.targets.clear();
-        for off in [vec2(300.0, -170.0), vec2(330.0, 0.0), vec2(300.0, 170.0)] {
-            self.targets.push(PracticeTarget {
-                pos: center + off,
-                flash: 0.0,
-                pending_hits: 0,
-                pending_bullseye: false,
-            });
+    /// Add a generated node unless its spot has already been mined out.
+    fn push_generated_node(&mut self, pos: Vec2, kind: NodeKind, seed: f32) {
+        let stored = self.node_hp.get(&node_key(pos)).copied();
+        if matches!(stored, Some(hp) if hp <= 0.0) {
+            return;
         }
-        let spots: Vec<Vec2> = self.targets.iter().map(|t| t.pos).collect();
-        self.nodes.retain(|n| {
-            !n.kind.solid() || spots.iter().all(|p| p.distance(n.pos) > n.radius * 0.7 + 34.0)
+        let max_hp = kind.max_hp();
+        self.nodes.push(ResourceNode {
+            pos,
+            kind,
+            hp: stored.unwrap_or(max_hp).min(max_hp),
+            max_hp,
+            radius: kind.radius(),
+            shake: 0.0,
+            seed,
         });
     }
 
@@ -1041,14 +1164,14 @@ impl World {
         let angle: f32 = gen_range(0.0, TAU);
         let dist: f32 = gen_range(640.0, 960.0);
         let mut pos = player_pos + vec2(angle.cos() * dist, angle.sin() * dist);
-        pos.x = pos.x.clamp(70.0, WORLD_SIZE - 70.0);
-        pos.y = pos.y.clamp(70.0, WORLD_SIZE - 70.0);
         if pos.distance(player_pos) < 430.0 {
-            let to_center =
-                (vec2(WORLD_SIZE * 0.5, WORLD_SIZE * 0.5) - player_pos).normalize_or_zero();
-            pos = player_pos + to_center * 640.0;
-            pos.x = pos.x.clamp(70.0, WORLD_SIZE - 70.0);
-            pos.y = pos.y.clamp(70.0, WORLD_SIZE - 70.0);
+            let inward = (home() - player_pos).normalize_or_zero();
+            let inward = if inward.length_squared() < 0.5 {
+                vec2(1.0, 0.0)
+            } else {
+                inward
+            };
+            pos = player_pos + inward * 640.0;
         }
         // Nothing spawns in a lake or river.
         if let Some(w) = self
@@ -1063,8 +1186,6 @@ impl World {
                 away.normalize()
             };
             pos = w.pos + away * (w.radius + 50.0);
-            pos.x = pos.x.clamp(70.0, WORLD_SIZE - 70.0);
-            pos.y = pos.y.clamp(70.0, WORLD_SIZE - 70.0);
         }
         // Raiders are people and turn up anywhere; animals come from whichever
         // region the spawn point landed in.
@@ -1138,6 +1259,9 @@ impl World {
             self.last_biome = here;
             progress.show_banner(here.name(), here.subtitle());
         }
+
+        // Stream fresh ground in as the survivor explores.
+        self.stream(player.pos);
 
         for node in self.nodes.iter_mut() {
             if node.shake > 0.0 {
@@ -1384,8 +1508,6 @@ impl World {
                 let pace = if hunt { 1.0 } else { 0.35 };
                 let step = desired.normalize() * kind.speed() * pace * dt;
                 let mut np = epos + step;
-                np.x = np.x.clamp(50.0, WORLD_SIZE - 50.0);
-                np.y = np.y.clamp(50.0, WORLD_SIZE - 50.0);
                 for b in buildings.items.iter() {
                     if b.blocks(false) {
                         let off = np - b.pos;
@@ -1837,14 +1959,13 @@ impl World {
     }
 
     /// Depleted nodes are removed and a fresh node of the same kind is placed
-    /// elsewhere in the world, keeping the map stocked.
+    /// further out in the world, keeping the ground stocked as you explore.
     fn spawn_replacement(&mut self, kind: NodeKind, player_pos: Vec2) {
         for _ in 0..160 {
-            let pos = vec2(
-                gen_range(110.0, WORLD_SIZE - 110.0),
-                gen_range(110.0, WORLD_SIZE - 110.0),
-            );
-            if pos.distance(player_pos) < 380.0 {
+            let angle = gen_range(0.0, TAU);
+            let dist = gen_range(430.0, 1250.0);
+            let pos = player_pos + vec2(angle.cos() * dist, angle.sin() * dist);
+            if self.is_water(pos) {
                 continue;
             }
             if self.nodes.iter().any(|n| n.pos.distance(pos) < 78.0) {
@@ -1853,10 +1974,6 @@ impl World {
             self.push_node(pos, kind);
             return;
         }
-        let mut pos = player_pos + vec2(gen_range(-320.0, 320.0), gen_range(-320.0, 320.0));
-        pos.x = pos.x.clamp(110.0, WORLD_SIZE - 110.0);
-        pos.y = pos.y.clamp(110.0, WORLD_SIZE - 110.0);
-        self.push_node(pos, kind);
     }
 
     /// Swing the equipped weapon: damage enemies in the arc and harvest the
@@ -1985,6 +2102,8 @@ impl World {
                     life: 1.2,
                     max_life: 1.2,
                 });
+                // Remember the spot as mined out so it never grows back.
+                self.node_hp.insert(node_key(npos), 0.0);
                 self.nodes.remove(i);
                 self.spawn_replacement(kind, player.pos);
             }
@@ -1997,22 +2116,16 @@ impl World {
     // -----------------------------------------------------------------------
 
     pub fn draw_ground(&self, camera_target: Vec2) {
-        draw_rectangle(
-            -3000.0,
-            -3000.0,
-            WORLD_SIZE + 6000.0,
-            WORLD_SIZE + 6000.0,
-            Color::new(0.07, 0.13, 0.10, 1.0),
-        );
         let (min, max) = view_bounds(camera_target);
 
         // Biome paint: one small tile per patch of ground, so the meadow, the
-        // desert, the rainforest and the savanna each read at a glance.
+        // desert, the rainforest and the savanna each read at a glance. The map
+        // is endless, so tiles simply run past the edge of the screen.
         const TILE: f32 = 40.0;
-        let x0 = (min.x.max(0.0) / TILE).floor() * TILE;
-        let y0 = (min.y.max(0.0) / TILE).floor() * TILE;
-        let x1 = max.x.min(WORLD_SIZE);
-        let y1 = max.y.min(WORLD_SIZE);
+        let x0 = (min.x / TILE).floor() * TILE;
+        let y0 = (min.y / TILE).floor() * TILE;
+        let x1 = max.x;
+        let y1 = max.y;
         let mut ty = y0;
         while ty < y1 {
             let mut tx = x0;
@@ -2209,28 +2322,6 @@ impl World {
             }
         }
 
-        // Boundary: thick dark edge with posts.
-        draw_rectangle_lines(0.0, 0.0, WORLD_SIZE, WORLD_SIZE, 12.0, OUTLINE);
-        draw_rectangle_lines(
-            8.0,
-            8.0,
-            WORLD_SIZE - 16.0,
-            WORLD_SIZE - 16.0,
-            2.0,
-            Color::new(0.92, 0.82, 0.45, 0.35),
-        );
-        let mut t = 60.0;
-        while t < WORLD_SIZE {
-            for (px, py) in [
-                (t, 6.0),
-                (t, WORLD_SIZE - 6.0),
-                (6.0, t),
-                (WORLD_SIZE - 6.0, t),
-            ] {
-                outlined_circle(vec2(px, py), 5.0, Color::new(0.55, 0.45, 0.28, 1.0));
-            }
-            t += 160.0;
-        }
     }
 
     pub fn draw_nodes(&self, camera_target: Vec2) {
@@ -2407,7 +2498,7 @@ impl World {
             .targets
             .get(1)
             .map(|t| t.pos)
-            .unwrap_or(vec2(WORLD_SIZE * 0.5, WORLD_SIZE * 0.5));
+            .unwrap_or_else(home);
         mid + vec2(130.0, 0.0)
     }
 

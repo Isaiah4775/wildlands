@@ -12,7 +12,7 @@ use crate::progression::{
     RANGED_UNLOCK_MELEE_LEVEL,
 };
 use crate::world::{
-    draw_text_center, rot_vec, text_px, text_width, with_alpha, World, OUTLINE, WORLD_SIZE,
+    draw_text_center, rot_vec, text_px, text_width, with_alpha, World, OUTLINE,
 };
 
 pub const GOLD: Color = Color::new(0.98, 0.82, 0.36, 1.0);
@@ -494,26 +494,39 @@ fn draw_minimap(world: &World, buildings: &BuildingManager, player: &Player) {
     let ix = x + 8.0;
     let iy = y + 8.0;
     draw_rectangle(ix, iy, inner, inner, Color::new(0.13, 0.26, 0.15, 1.0));
-    let s = inner / WORLD_SIZE;
+    // The wildlands never end, so the radar shows a window around the survivor
+    // rather than the whole map.
+    const RADAR: f32 = 1200.0;
+    let s = inner / RADAR;
+    let to_map = |p: Vec2| {
+        vec2(
+            ix + (p.x - player.pos.x) * s + inner * 0.5,
+            iy + (p.y - player.pos.y) * s + inner * 0.5,
+        )
+    };
+    let on_map = |p: Vec2| {
+        let d = p - player.pos;
+        d.x.abs() <= RADAR * 0.5 && d.y.abs() <= RADAR * 0.5
+    };
 
-    for n in world.nodes.iter() {
-        let p = vec2(ix + n.pos.x * s, iy + n.pos.y * s);
+    for n in world.nodes.iter().filter(|n| on_map(n.pos)) {
+        let p = to_map(n.pos);
         draw_rectangle(p.x - 1.0, p.y - 1.0, 2.0, 2.0, with_alpha(n.kind.resource().color(), 0.9));
     }
-    for b in buildings.items.iter() {
-        let p = vec2(ix + b.pos.x * s, iy + b.pos.y * s);
+    for b in buildings.items.iter().filter(|b| on_map(b.pos)) {
+        let p = to_map(b.pos);
         draw_rectangle(p.x - 1.5, p.y - 1.5, 3.0, 3.0, GOLD);
     }
-    for e in world.enemies.iter() {
-        let p = vec2(ix + e.pos.x * s, iy + e.pos.y * s);
+    for e in world.enemies.iter().filter(|e| on_map(e.pos)) {
+        let p = to_map(e.pos);
         draw_circle(p.x, p.y, 2.2, Color::new(1.0, 0.28, 0.28, 1.0));
     }
-    for a in world.arrows.iter() {
-        let p = vec2(ix + a.pos.x * s, iy + a.pos.y * s);
+    for a in world.arrows.iter().filter(|a| on_map(a.pos)) {
+        let p = to_map(a.pos);
         draw_rectangle(p.x - 1.0, p.y - 1.0, 2.0, 2.0, CYAN);
     }
 
-    let pp = vec2(ix + player.pos.x * s, iy + player.pos.y * s);
+    let pp = to_map(player.pos);
     let d = vec2(player.aim.cos(), player.aim.sin()) * 7.0;
     draw_triangle(
         pp + d,

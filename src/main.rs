@@ -54,6 +54,10 @@ struct SaveData {
     elapsed: f32,
     world_elapsed: f32,
     hp_level: usize,
+    /// Mining state for generated nodes, so harvested outcrops stay harvested
+    /// once their chunk unloads. Defaulted for saves written before streaming.
+    #[serde(default)]
+    node_hp: Vec<((i32, i32), f32)>,
 }
 
 fn window_conf() -> Conf {
@@ -117,6 +121,7 @@ impl Game {
             elapsed: self.elapsed,
             world_elapsed: self.world.elapsed,
             hp_level: self.world.saved_hp_level(),
+            node_hp: self.world.node_overrides(),
         };
         let json = serde_json::to_string(&data).map_err(|e| e.to_string())?;
         let path = save::save_path();
@@ -139,11 +144,14 @@ impl Game {
         self.progress.banners.clear();
         self.buildings = data.buildings;
         self.buildings.shots.clear();
+        let player_pos = self.player.pos;
         self.world = World::from_saved(
             data.nodes,
             data.enemies,
             data.world_elapsed,
             data.hp_level,
+            data.node_hp,
+            player_pos,
         );
         self.elapsed = data.elapsed;
         self.camera_target = self.player.pos;
@@ -490,13 +498,8 @@ impl Game {
             &mut self.progress,
         );
 
-        let half = vec2(screen_width() * 0.5, screen_height() * 0.5);
-        let min_x = half.x.min(WORLD_SIZE * 0.5);
-        let min_y = half.y.min(WORLD_SIZE * 0.5);
         let follow = 1.0 - (-9.0 * dt).exp();
         self.camera_target += (self.player.pos - self.camera_target) * follow;
-        self.camera_target.x = self.camera_target.x.clamp(min_x, WORLD_SIZE - min_x);
-        self.camera_target.y = self.camera_target.y.clamp(min_y, WORLD_SIZE - min_y);
 
         if self.player.health <= 0.0 {
             self.state = GameState::GameOver;
@@ -634,6 +637,7 @@ mod tests {
             elapsed: game.elapsed,
             world_elapsed: game.world.elapsed,
             hp_level: game.world.saved_hp_level(),
+            node_hp: game.world.node_overrides(),
         };
         let json = serde_json::to_string(&data).expect("serialize save");
         let restored: SaveData = serde_json::from_str(&json).expect("deserialize save");
@@ -672,7 +676,7 @@ mod tests {
 
     #[test]
     fn biomes_and_water_are_laid_out_sensibly() {
-        use crate::world::{biome_at, Biome, MEADOW_RADIUS, WORLD_SIZE};
+        use crate::world::{biome_at, Biome, WORLD_SIZE};
 
         let center = vec2(WORLD_SIZE * 0.5, WORLD_SIZE * 0.5);
         assert_eq!(biome_at(center), Biome::Meadow);
@@ -681,11 +685,10 @@ mod tests {
         assert_eq!(biome_at(center + vec2(200.0, -1500.0)), Biome::Desert);
 
         let game = Game::new();
-        assert!(game.world.water.len() >= 3, "world needs bodies of water");
         for w in game.world.water.iter() {
             assert!(
-                w.pos.distance(center) > MEADOW_RADIUS,
-                "water must not sit in the starting meadow"
+                w.pos.distance(center) > 470.0 + w.radius,
+                "water must not flood the camp"
             );
         }
         for n in game.world.nodes.iter() {
@@ -694,5 +697,34 @@ mod tests {
         for t in game.world.targets.iter() {
             assert!(!game.world.is_water(t.pos), "target spawned in water");
         }
+    }
+
+    #[test]
+    fn the_map_streams_new_ground_forever() {
+        use crate::world::{home, node_key};
+
+        let mut game = Game::new();
+        assert!(
+            !game.world.nodes.is_empty(),
+            "the camp needs its starter resources"
+        );
+
+        let far = home() + vec2(-41_000.0, 12_300.0);
+        game.world.stream(far);
+        assert!(!game.world.nodes.is_empty(), "far chunks must generate nodes");
+        let first: Vec<_> = game.world.nodes.iter().map(|n| node_key(n.pos)).collect();
+        for n in game.world.nodes.iter() {
+            assert!(!game.world.is_water(n.pos), "node spawned in water");
+            assert!(
+                n.pos.distance(home()) > 20_000.0,
+                "unloaded camp content must not linger"
+            );
+        }
+
+        // Walking away and back must rebuild exactly the same ground.
+        game.world.stream(home());
+        game.world.stream(far);
+        let second: Vec<_> = game.world.nodes.iter().map(|n| node_key(n.pos)).collect();
+        assert_eq!(first, second);
     }
 }

@@ -9,7 +9,7 @@ use crate::player::Player;
 use crate::progression::{Progression, UnlockId};
 use crate::world::{
     draw_rot_rect, draw_rot_rect_outlined, draw_text_center, outlined_circle, outlined_poly,
-    rot_vec, shadow, with_alpha, Floater, World, OUTLINE, WORLD_SIZE,
+    rot_vec, shadow, with_alpha, Floater, World, OUTLINE,
 };
 
 pub const TILE: f32 = 48.0;
@@ -354,13 +354,6 @@ impl BuildingManager {
         let cost = kind.cost();
         if player.wood < cost.wood || player.stone < cost.stone || player.metal < cost.metal {
             return Err("Not enough resources");
-        }
-        if pos.x < 56.0
-            || pos.y < 56.0
-            || pos.x > WORLD_SIZE - 56.0
-            || pos.y > WORLD_SIZE - 56.0
-        {
-            return Err("Outside the wildlands");
         }
         if self.items.iter().any(|b| b.pos.distance(pos) < TILE - 3.0) {
             return Err("Tile occupied");

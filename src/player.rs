@@ -10,7 +10,6 @@ use crate::progression::{
 };
 use crate::world::{
     draw_rot_rect_outlined, outlined_circle, rot_vec, with_alpha, Resource, World, OUTLINE,
-    WORLD_SIZE,
 };
 
 #[derive(Clone, Copy)]
@@ -495,9 +494,6 @@ impl Player {
             self.moving = false;
             self.walk_phase += dt * 2.0;
         }
-
-        self.pos.x = self.pos.x.clamp(40.0, WORLD_SIZE - 40.0);
-        self.pos.y = self.pos.y.clamp(40.0, WORLD_SIZE - 40.0);
 
         // The survivor can step over their own walls and gates; the horde
         // cannot. Turrets and other stations are also walk-through for you.
