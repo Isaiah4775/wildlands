@@ -372,6 +372,9 @@ impl BuildingManager {
         {
             return Err("Resource in the way");
         }
+        if world.is_water(pos) {
+            return Err("Cannot build on water");
+        }
         if player.pos.distance(pos) < 34.0 {
             return Err("Step back to build");
         }

@@ -92,6 +92,95 @@ pub fn shadow(pos: Vec2, radius: f32) {
     );
 }
 
+/// Shared body plan for the four-legged animals, so a jackal, a jaguar, a lion
+/// and a buffalo read as different creatures without four copies of the art.
+fn draw_quadruped(
+    e: &Enemy,
+    dir: Vec2,
+    side: Vec2,
+    len: f32,
+    wid: f32,
+    head_r: f32,
+    body: Color,
+    dark: Color,
+    accent: Color,
+    mane: bool,
+    tusks: bool,
+    stripes: bool,
+) {
+    for s in [-1.0, 1.0] {
+        let leg = e.pos + side * (wid * 0.42 * s) + dir * (len * 0.04);
+        draw_rot_rect_outlined(leg, wid * 0.26, 15.0, e.facing, dark);
+        draw_circle(leg.x + dir.x * 5.0, leg.y + dir.y * 5.0, 3.4, dark);
+    }
+    let tail = e.pos - dir * (len * 0.52);
+    let tail_tip = tail - dir * (len * 0.22) + side * (wid * 0.26);
+    draw_line(tail.x, tail.y, tail_tip.x, tail_tip.y, 3.0, dark);
+    if mane {
+        draw_circle(tail_tip.x, tail_tip.y, 4.0, accent);
+    }
+    draw_rot_rect_outlined(e.pos, len, wid, e.facing, body);
+    draw_circle(
+        e.pos.x - dir.x * len * 0.06 - side.x * wid * 0.12,
+        e.pos.y - dir.y * len * 0.06 - side.y * wid * 0.12,
+        wid * 0.28,
+        with_alpha(accent, 0.35),
+    );
+    if stripes {
+        for k in -1..=1 {
+            let base = e.pos + dir * (k as f32 * len * 0.18);
+            draw_line(
+                base.x + side.x * wid * 0.5,
+                base.y + side.y * wid * 0.5,
+                base.x - side.x * wid * 0.5,
+                base.y - side.y * wid * 0.5,
+                2.4,
+                with_alpha(dark, 0.55),
+            );
+        }
+    }
+    let head = e.pos + dir * (len * 0.52);
+    if mane {
+        outlined_circle(head - dir * 2.0, head_r * 1.55, accent);
+    }
+    for s in [-1.0, 1.0] {
+        outlined_circle(
+            head + side * (head_r * 0.62 * s) - dir * (head_r * 0.15),
+            head_r * 0.4,
+            dark,
+        );
+    }
+    outlined_circle(head, head_r, body);
+    draw_circle(
+        head.x + dir.x * head_r * 0.55,
+        head.y + dir.y * head_r * 0.55,
+        head_r * 0.5,
+        with_alpha(accent, 0.9),
+    );
+    draw_circle(
+        head.x + dir.x * head_r * 0.95,
+        head.y + dir.y * head_r * 0.95,
+        head_r * 0.28,
+        OUTLINE,
+    );
+    if tusks {
+        for s in [-1.0, 1.0] {
+            let base = head + side * (head_r * 0.5 * s) + dir * (head_r * 0.2);
+            draw_triangle(
+                base,
+                base + side * (2.4 * s) - dir * 3.0,
+                base + dir * 9.0,
+                Color::new(0.88, 0.84, 0.68, 1.0),
+            );
+        }
+    }
+    for s in [-1.0, 1.0] {
+        let eye = head + side * (head_r * 0.42 * s) + dir * (head_r * 0.3);
+        draw_circle(eye.x, eye.y, head_r * 0.3, Color::new(1.0, 0.76, 0.24, 0.16));
+        draw_circle(eye.x, eye.y, head_r * 0.16, Color::new(1.0, 0.88, 0.35, 1.0));
+    }
+}
+
 pub fn draw_bar(top_left_center: Vec2, width: f32, height: f32, frac: f32, fill: Color) {
     let x = top_left_center.x - width * 0.5;
     let y = top_left_center.y;
@@ -163,6 +252,93 @@ fn on_screen(p: Vec2, min: Vec2, max: Vec2, margin: f32) -> bool {
 // ---------------------------------------------------------------------------
 // Resources & nodes
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Biomes and water
+// ---------------------------------------------------------------------------
+
+/// The camp sits in a green meadow. Beyond it the map is split into three wild
+/// regions, each with its own ground, plants and animals.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Biome {
+    Meadow,
+    Desert,
+    Rainforest,
+    Savanna,
+}
+
+/// Radius of the starting meadow around the centre of the map.
+pub const MEADOW_RADIUS: f32 = 900.0;
+
+impl Biome {
+    pub fn name(self) -> &'static str {
+        match self {
+            Biome::Meadow => "MEADOW",
+            Biome::Desert => "DESERT",
+            Biome::Rainforest => "RAINFOREST",
+            Biome::Savanna => "SAVANNA",
+        }
+    }
+
+    /// Flavour line shown when the survivor crosses into the region.
+    pub fn subtitle(self) -> &'static str {
+        match self {
+            Biome::Meadow => "Home ground",
+            Biome::Desert => "Sand, thorn and jackals",
+            Biome::Rainforest => "Wet green tangle",
+            Biome::Savanna => "Dry grass and big cats",
+        }
+    }
+
+    /// Ground paint for this region.
+    pub fn ground(self) -> Color {
+        match self {
+            Biome::Meadow => Color::new(0.20, 0.33, 0.19, 1.0),
+            Biome::Desert => Color::new(0.66, 0.55, 0.33, 1.0),
+            Biome::Rainforest => Color::new(0.12, 0.27, 0.15, 1.0),
+            Biome::Savanna => Color::new(0.48, 0.44, 0.23, 1.0),
+        }
+    }
+
+    /// Which animals live here. Raiders are people, so they turn up anywhere.
+    pub fn animals(self) -> &'static [EnemyKind] {
+        match self {
+            Biome::Meadow => &[EnemyKind::Wolf, EnemyKind::Bear],
+            Biome::Desert => &[EnemyKind::Jackal, EnemyKind::Scorpion],
+            Biome::Rainforest => &[EnemyKind::Jaguar, EnemyKind::Boa],
+            Biome::Savanna => &[EnemyKind::Lion, EnemyKind::Buffalo],
+        }
+    }
+}
+
+/// Which biome covers a point of the map: a meadow disc around the camp, then
+/// three 120 degree wedges of savanna, rainforest and desert.
+pub fn biome_at(pos: Vec2) -> Biome {
+    let d = pos - vec2(WORLD_SIZE * 0.5, WORLD_SIZE * 0.5);
+    if d.length() < MEADOW_RADIUS {
+        return Biome::Meadow;
+    }
+    let mut a = d.y.atan2(d.x);
+    if a < 0.0 {
+        a += TAU;
+    }
+    let third = TAU / 3.0;
+    if a < third {
+        Biome::Savanna
+    } else if a < third * 2.0 {
+        Biome::Rainforest
+    } else {
+        Biome::Desert
+    }
+}
+
+/// A pond, oasis or stretch of river. Water cannot be walked through or built
+/// on, though arrows and rounds still fly over it.
+pub struct Water {
+    pub pos: Vec2,
+    pub radius: f32,
+    pub seed: f32,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Resource {
@@ -263,6 +439,12 @@ pub enum EnemyKind {
     Wolf,
     Bear,
     Raider,
+    Jackal,
+    Scorpion,
+    Jaguar,
+    Boa,
+    Lion,
+    Buffalo,
 }
 
 impl EnemyKind {
@@ -271,6 +453,12 @@ impl EnemyKind {
             EnemyKind::Wolf => 80.0,
             EnemyKind::Bear => 210.0,
             EnemyKind::Raider => 140.0,
+            EnemyKind::Jackal => 65.0,
+            EnemyKind::Scorpion => 55.0,
+            EnemyKind::Jaguar => 150.0,
+            EnemyKind::Boa => 190.0,
+            EnemyKind::Lion => 240.0,
+            EnemyKind::Buffalo => 300.0,
         }
     }
 
@@ -279,6 +467,12 @@ impl EnemyKind {
             EnemyKind::Wolf => 150.0,
             EnemyKind::Bear => 106.0,
             EnemyKind::Raider => 124.0,
+            EnemyKind::Jackal => 172.0,
+            EnemyKind::Scorpion => 92.0,
+            EnemyKind::Jaguar => 178.0,
+            EnemyKind::Boa => 84.0,
+            EnemyKind::Lion => 164.0,
+            EnemyKind::Buffalo => 112.0,
         }
     }
 
@@ -287,6 +481,12 @@ impl EnemyKind {
             EnemyKind::Wolf => 7.0,
             EnemyKind::Bear => 15.0,
             EnemyKind::Raider => 11.0,
+            EnemyKind::Jackal => 6.0,
+            EnemyKind::Scorpion => 12.0,
+            EnemyKind::Jaguar => 13.0,
+            EnemyKind::Boa => 16.0,
+            EnemyKind::Lion => 16.0,
+            EnemyKind::Buffalo => 18.0,
         }
     }
 
@@ -297,6 +497,12 @@ impl EnemyKind {
             EnemyKind::Wolf => 720.0,
             EnemyKind::Bear => 560.0,
             EnemyKind::Raider => 700.0,
+            EnemyKind::Jackal => 740.0,
+            EnemyKind::Scorpion => 380.0,
+            EnemyKind::Jaguar => 760.0,
+            EnemyKind::Boa => 300.0,
+            EnemyKind::Lion => 780.0,
+            EnemyKind::Buffalo => 420.0,
         }
     }
 
@@ -307,6 +513,12 @@ impl EnemyKind {
             EnemyKind::Wolf => 340.0,
             EnemyKind::Bear => 300.0,
             EnemyKind::Raider => 380.0,
+            EnemyKind::Jackal => 360.0,
+            EnemyKind::Scorpion => 220.0,
+            EnemyKind::Jaguar => 340.0,
+            EnemyKind::Boa => 240.0,
+            EnemyKind::Lion => 360.0,
+            EnemyKind::Buffalo => 300.0,
         }
     }
 
@@ -315,6 +527,12 @@ impl EnemyKind {
             EnemyKind::Wolf => 16.0,
             EnemyKind::Bear => 23.0,
             EnemyKind::Raider => 17.0,
+            EnemyKind::Jackal => 15.0,
+            EnemyKind::Scorpion => 12.0,
+            EnemyKind::Jaguar => 18.0,
+            EnemyKind::Boa => 20.0,
+            EnemyKind::Lion => 22.0,
+            EnemyKind::Buffalo => 25.0,
         }
     }
 
@@ -323,8 +541,15 @@ impl EnemyKind {
             EnemyKind::Wolf => (Resource::Food, 5.0),
             EnemyKind::Bear => (Resource::Food, 12.0),
             EnemyKind::Raider => (Resource::Metal, 6.0),
+            EnemyKind::Jackal => (Resource::Food, 4.0),
+            EnemyKind::Scorpion => (Resource::Food, 3.0),
+            EnemyKind::Jaguar => (Resource::Food, 9.0),
+            EnemyKind::Boa => (Resource::Food, 10.0),
+            EnemyKind::Lion => (Resource::Food, 14.0),
+            EnemyKind::Buffalo => (Resource::Food, 16.0),
         }
     }
+
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -349,6 +574,11 @@ pub struct Enemy {
     /// Seconds since this animal last had eyes on the survivor.
     #[serde(default)]
     pub lost_timer: f32,
+    /// Where this animal lives. It wanders around this point and never leaves
+    /// its biome on its own; raiders ignore it and roam. Defaulted to zero for
+    /// saves written before biomes existed, then set to the enemy position.
+    #[serde(default, with = "crate::save::vec2_serde")]
+    pub home: Vec2,
 }
 
 /// How long an animal keeps hunting after it loses sight of the survivor
@@ -477,6 +707,10 @@ pub struct World {
     particles: Vec<Particle>,
     decor: Vec<Decor>,
     pub targets: Vec<PracticeTarget>,
+    /// Ponds, oases and river stretches. Impassable, and impossible to build on.
+    pub water: Vec<Water>,
+    /// Biome the survivor is standing in, so entering a region can be announced.
+    last_biome: Biome,
     /// Session-only practice score, cleared from the range sign.
     pub practice_hits: u32,
     pub practice_bullseyes: u32,
@@ -499,6 +733,8 @@ impl World {
             particles: Vec::new(),
             decor: Vec::new(),
             targets: Vec::new(),
+            water: Vec::new(),
+            last_biome: Biome::Meadow,
             practice_hits: 0,
             practice_bullseyes: 0,
             spawn_timer: 4.0,
@@ -519,6 +755,13 @@ impl World {
         let mut world = Self::new();
         world.nodes = nodes;
         world.enemies = enemies;
+        // Saves from before biomes have no home point; treat where they are
+        // standing as where they live.
+        for e in world.enemies.iter_mut() {
+            if e.home.length_squared() < 1.0 {
+                e.home = e.pos;
+            }
+        }
         world.arrays_clear();
         world.elapsed = elapsed;
         world.hp_level = hp_level.max(1);
@@ -549,22 +792,102 @@ impl World {
         });
     }
 
+    pub fn is_water(&self, pos: Vec2) -> bool {
+        self.water.iter().any(|w| w.pos.distance(pos) < w.radius)
+    }
+
     fn generate(&mut self) {
+        let center = vec2(WORLD_SIZE * 0.5, WORLD_SIZE * 0.5);
+
+        // Water first, so nothing else is ever placed inside a lake or river.
+        self.water.clear();
+        // Savanna watering hole, south-east of the camp.
+        self.water.push(Water {
+            pos: center + vec2(700.0, 640.0),
+            radius: 190.0,
+            seed: 1.7,
+        });
+        self.water.push(Water {
+            pos: center + vec2(884.0, 772.0),
+            radius: 132.0,
+            seed: 4.1,
+        });
+        // Desert oasis, to the north-west.
+        self.water.push(Water {
+            pos: center + vec2(-420.0, -1080.0),
+            radius: 126.0,
+            seed: 2.6,
+        });
+        // A river winding through the rainforest in the south-west.
+        for (i, (x, y)) in [
+            (-900.0, 560.0),
+            (-1050.0, 720.0),
+            (-1220.0, 900.0),
+            (-1400.0, 1100.0),
+        ]
+        .iter()
+        .enumerate()
+        {
+            self.water.push(Water {
+                pos: center + vec2(*x, *y),
+                radius: 118.0 - i as f32 * 6.0,
+                seed: 3.0 + i as f32,
+            });
+        }
+
         self.decor.clear();
         for _ in 0..1500 {
             let pos = vec2(
                 gen_range(20.0, WORLD_SIZE - 20.0),
                 gen_range(20.0, WORLD_SIZE - 20.0),
             );
+            if self.is_water(pos) {
+                continue;
+            }
             let roll: f32 = gen_range(0.0, 1.0);
-            let kind = if roll < 0.56 {
-                DecorKind::Tuft
-            } else if roll < 0.72 {
-                DecorKind::Patch
-            } else if roll < 0.89 {
-                DecorKind::Flower
-            } else {
-                DecorKind::Stone
+            let kind = match biome_at(pos) {
+                Biome::Meadow => {
+                    if roll < 0.56 {
+                        DecorKind::Tuft
+                    } else if roll < 0.72 {
+                        DecorKind::Patch
+                    } else if roll < 0.89 {
+                        DecorKind::Flower
+                    } else {
+                        DecorKind::Stone
+                    }
+                }
+                Biome::Desert => {
+                    if roll < 0.30 {
+                        DecorKind::Tuft
+                    } else if roll < 0.56 {
+                        DecorKind::Stone
+                    } else {
+                        DecorKind::Patch
+                    }
+                }
+                Biome::Rainforest => {
+                    if roll < 0.60 {
+                        DecorKind::Tuft
+                    } else if roll < 0.72 {
+                        DecorKind::Patch
+                    } else if roll < 0.96 {
+                        DecorKind::Flower
+                    } else {
+                        DecorKind::Stone
+                    }
+                }
+                Biome::Savanna => {
+                    if roll < 0.50 {
+                        DecorKind::Tuft
+                    } else if roll < 0.80 {
+                        DecorKind::Patch
+                    } else if roll < 0.90 {
+                        DecorKind::Flower
+                    } else {
+                        DecorKind::Stone
+                    }
+                }
             };
             self.decor.push(Decor {
                 pos,
@@ -575,7 +898,6 @@ impl World {
         }
 
         self.nodes.clear();
-        let center = vec2(WORLD_SIZE * 0.5, WORLD_SIZE * 0.5);
         let mut attempts = 0;
         while self.nodes.len() < 185 && attempts < 9000 {
             attempts += 1;
@@ -586,6 +908,9 @@ impl World {
             if pos.distance(center) < 150.0 {
                 continue;
             }
+            if self.is_water(pos) {
+                continue;
+            }
             if self
                 .nodes
                 .iter()
@@ -593,15 +918,53 @@ impl World {
             {
                 continue;
             }
+            // Each region grows what suits it: succulents and rock in the
+            // desert, dense timber in the rainforest, thorn and acacia in the
+            // savanna.
             let roll: f32 = gen_range(0.0, 1.0);
-            let kind = if roll < 0.24 {
-                NodeKind::Berry
-            } else if roll < 0.58 {
-                NodeKind::Tree
-            } else if roll < 0.84 {
-                NodeKind::Rock
-            } else {
-                NodeKind::Iron
+            let kind = match biome_at(pos) {
+                Biome::Meadow => {
+                    if roll < 0.24 {
+                        NodeKind::Berry
+                    } else if roll < 0.58 {
+                        NodeKind::Tree
+                    } else if roll < 0.84 {
+                        NodeKind::Rock
+                    } else {
+                        NodeKind::Iron
+                    }
+                }
+                Biome::Desert => {
+                    if roll < 0.34 {
+                        NodeKind::Berry
+                    } else if roll < 0.72 {
+                        NodeKind::Rock
+                    } else {
+                        NodeKind::Iron
+                    }
+                }
+                Biome::Rainforest => {
+                    if roll < 0.34 {
+                        NodeKind::Berry
+                    } else if roll < 0.82 {
+                        NodeKind::Tree
+                    } else if roll < 0.94 {
+                        NodeKind::Rock
+                    } else {
+                        NodeKind::Iron
+                    }
+                }
+                Biome::Savanna => {
+                    if roll < 0.30 {
+                        NodeKind::Berry
+                    } else if roll < 0.50 {
+                        NodeKind::Tree
+                    } else if roll < 0.86 {
+                        NodeKind::Rock
+                    } else {
+                        NodeKind::Iron
+                    }
+                }
             };
             self.push_node(pos, kind);
         }
@@ -675,13 +1038,6 @@ impl World {
 
     fn spawn_enemy(&mut self, player: &Player) {
         let player_pos = player.pos;
-        let mut kind = EnemyKind::Wolf;
-        let roll: f32 = gen_range(0.0, 1.0);
-        if self.elapsed > 80.0 && roll > 0.7 {
-            kind = EnemyKind::Raider;
-        } else if self.elapsed > 40.0 && roll > 0.46 {
-            kind = EnemyKind::Bear;
-        }
         let angle: f32 = gen_range(0.0, TAU);
         let dist: f32 = gen_range(640.0, 960.0);
         let mut pos = player_pos + vec2(angle.cos() * dist, angle.sin() * dist);
@@ -693,6 +1049,38 @@ impl World {
             pos = player_pos + to_center * 640.0;
             pos.x = pos.x.clamp(70.0, WORLD_SIZE - 70.0);
             pos.y = pos.y.clamp(70.0, WORLD_SIZE - 70.0);
+        }
+        // Nothing spawns in a lake or river.
+        if let Some(w) = self
+            .water
+            .iter()
+            .find(|w| w.pos.distance(pos) < w.radius + 50.0)
+        {
+            let away = pos - w.pos;
+            let away = if away.length_squared() < 0.5 {
+                vec2(1.0, 0.0)
+            } else {
+                away.normalize()
+            };
+            pos = w.pos + away * (w.radius + 50.0);
+            pos.x = pos.x.clamp(70.0, WORLD_SIZE - 70.0);
+            pos.y = pos.y.clamp(70.0, WORLD_SIZE - 70.0);
+        }
+        // Raiders are people and turn up anywhere; animals come from whichever
+        // region the spawn point landed in.
+        let roll: f32 = gen_range(0.0, 1.0);
+        let biome = biome_at(pos);
+        let mut kind = if self.elapsed > 80.0 && roll > 0.7 {
+            EnemyKind::Raider
+        } else {
+            let roster = biome.animals();
+            let pick = (gen_range(0.0, roster.len() as f32) as usize).min(roster.len() - 1);
+            roster[pick]
+        };
+        // Wolves are the common early threat in the meadow; bears start
+        // turning up once the survivor has had a chance to arm up.
+        if kind == EnemyKind::Bear && self.elapsed < 45.0 {
+            kind = EnemyKind::Wolf;
         }
         let level = player.melee_level.max(player.ranged_level).max(1);
         let scale = 1.0 + (level.saturating_sub(1)) as f32 * 0.18;
@@ -710,6 +1098,7 @@ impl World {
             flank: if gen_range(0.0, 1.0) < 0.5 { -1.0 } else { 1.0 },
             alerted: false,
             lost_timer: 0.0,
+            home: pos,
         });
     }
 
@@ -742,6 +1131,13 @@ impl World {
         progress: &mut Progression,
     ) {
         self.elapsed += dt;
+
+        // Announce the region the survivor walks into.
+        let here = biome_at(player.pos);
+        if here != self.last_biome {
+            self.last_biome = here;
+            progress.show_banner(here.name(), here.subtitle());
+        }
 
         for node in self.nodes.iter_mut() {
             if node.shake > 0.0 {
@@ -890,9 +1286,27 @@ impl World {
             let mut desired = Vec2::ZERO;
 
             if !hunt {
-                // Unaware animals graze: a lazy drift, no interest in you.
-                let t = self.elapsed * 0.6 + i as f32 * 2.1;
-                desired = vec2(t.sin(), (t * 1.3).cos()) * 0.5;
+                // Unaware animals graze inside their home range: a lazy orbit
+                // around the spot they spawned on. If anything pushes them into
+                // another biome they walk back home instead of drifting on.
+                let home = self.enemies[i].home;
+                if biome_at(epos) != biome_at(home) {
+                    desired = (home - epos).normalize_or_zero() * kind.speed();
+                } else {
+                    let t = self.elapsed * 0.6 + i as f32 * 2.1;
+                    let mut target = home + vec2(t.sin(), (t * 1.3).cos()) * 190.0;
+                    // Grazing spots never lead into a lake or a neighbouring
+                    // biome; in that case the animal simply drifts home.
+                    if self.is_water(target) || biome_at(target) != biome_at(home) {
+                        target = home;
+                    }
+                    let to_target = target - epos;
+                    desired = if to_target.length() < 26.0 {
+                        Vec2::ZERO
+                    } else {
+                        to_target.normalize_or_zero() * kind.speed()
+                    };
+                }
             } else if attack_player {
                 self.enemies[i].facing = dir_to_player.y.atan2(dir_to_player.x);
             } else if let Some(bi) = attack_building {
@@ -1002,6 +1416,29 @@ impl World {
                         };
                         np = n.pos + push * min_dist;
                     }
+                }
+                // Wandering animals never leave their biome. Water stops
+                // everyone, hunter or not; nothing here can swim.
+                if !hunt && biome_at(np) != biome_at(self.enemies[i].home) {
+                    // Never wander out of the home biome, but allow a displaced
+                    // animal to walk back toward its home point.
+                    let home = self.enemies[i].home;
+                    if np.distance(home) >= epos.distance(home) {
+                        np = epos;
+                    }
+                }
+                // Water is impassable; slide along the bank instead of stopping
+                // dead when only one axis is wet.
+                if self.is_water(np) {
+                    let slide_x = vec2(np.x, epos.y);
+                    let slide_y = vec2(epos.x, np.y);
+                    np = if !self.is_water(slide_x) {
+                        slide_x
+                    } else if !self.is_water(slide_y) {
+                        slide_y
+                    } else {
+                        epos
+                    };
                 }
                 self.enemies[i].pos = np;
                 self.enemies[i].facing = desired.y.atan2(desired.x);
@@ -1567,9 +2004,92 @@ impl World {
             WORLD_SIZE + 6000.0,
             Color::new(0.07, 0.13, 0.10, 1.0),
         );
-        draw_rectangle(0.0, 0.0, WORLD_SIZE, WORLD_SIZE, Color::new(0.20, 0.33, 0.19, 1.0));
-
         let (min, max) = view_bounds(camera_target);
+
+        // Biome paint: one small tile per patch of ground, so the meadow, the
+        // desert, the rainforest and the savanna each read at a glance.
+        const TILE: f32 = 40.0;
+        let x0 = (min.x.max(0.0) / TILE).floor() * TILE;
+        let y0 = (min.y.max(0.0) / TILE).floor() * TILE;
+        let x1 = max.x.min(WORLD_SIZE);
+        let y1 = max.y.min(WORLD_SIZE);
+        let mut ty = y0;
+        while ty < y1 {
+            let mut tx = x0;
+            while tx < x1 {
+                let base = biome_at(vec2(tx + TILE * 0.5, ty + TILE * 0.5)).ground();
+                // Deterministic jitter so the paint is not a flat slab.
+                let shade = ((tx * 0.137 + ty * 0.311).sin() * 0.5 + 0.5) * 0.12 + 0.94;
+                draw_rectangle(
+                    tx,
+                    ty,
+                    TILE + 1.0,
+                    TILE + 1.0,
+                    Color::new(base.r * shade, base.g * shade, base.b * shade, 1.0),
+                );
+                tx += TILE;
+            }
+            ty += TILE;
+        }
+
+        // Water sits over the ground but under the plants.
+        let time = get_time() as f32;
+        for w in self.water.iter() {
+            if !on_screen(w.pos, min, max, w.radius + 70.0) {
+                continue;
+            }
+            // Wet bank, then the water itself.
+            draw_circle(
+                w.pos.x,
+                w.pos.y,
+                w.radius + 14.0,
+                Color::new(0.30, 0.28, 0.18, 0.45),
+            );
+            draw_circle(
+                w.pos.x,
+                w.pos.y,
+                w.radius + 6.0,
+                Color::new(0.52, 0.45, 0.27, 0.80),
+            );
+            draw_circle(w.pos.x, w.pos.y, w.radius, Color::new(0.08, 0.22, 0.28, 1.0));
+            draw_circle(
+                w.pos.x,
+                w.pos.y,
+                w.radius * 0.84,
+                Color::new(0.11, 0.32, 0.39, 1.0),
+            );
+            draw_circle(
+                w.pos.x - w.radius * 0.18,
+                w.pos.y - w.radius * 0.18,
+                w.radius * 0.52,
+                Color::new(0.18, 0.44, 0.52, 0.55),
+            );
+            // Slow ripples drifting across the surface.
+            for k in 0..3 {
+                let phase = (time * 0.7 + w.seed + k as f32 * 1.9).sin() * 0.5 + 0.5;
+                let rr = w.radius * (0.32 + 0.22 * k as f32 + phase * 0.06);
+                draw_circle_lines(
+                    w.pos.x,
+                    w.pos.y,
+                    rr,
+                    1.6,
+                    Color::new(0.62, 0.86, 0.90, 0.16),
+                );
+            }
+            // Reeds along the bank.
+            for k in 0..7 {
+                let a = w.seed + k as f32 * 0.9;
+                let rp = w.pos + vec2(a.cos(), a.sin()) * (w.radius - 2.0);
+                draw_line(
+                    rp.x,
+                    rp.y,
+                    rp.x + a.cos() * 3.0,
+                    rp.y - 11.0,
+                    1.8,
+                    Color::new(0.30, 0.46, 0.26, 0.9),
+                );
+            }
+        }
 
         for d in self.decor.iter() {
             if !on_screen(d.pos, min, max, 60.0) {
@@ -2197,6 +2717,165 @@ impl World {
                         base - spear_side * 3.0,
                         hand + spear_dir * 22.0,
                         Color::new(0.78, 0.86, 0.90, 1.0),
+                    );
+                }
+                EnemyKind::Jackal => {
+                    draw_quadruped(
+                        e,
+                        dir,
+                        side,
+                        36.0,
+                        18.0,
+                        9.0,
+                        Color::new(0.70, 0.55, 0.32, 1.0),
+                        Color::new(0.44, 0.32, 0.19, 1.0),
+                        Color::new(0.60, 0.47, 0.27, 1.0),
+                        false,
+                        false,
+                        false,
+                    );
+                }
+                EnemyKind::Jaguar => {
+                    draw_quadruped(
+                        e,
+                        dir,
+                        side,
+                        44.0,
+                        26.0,
+                        11.0,
+                        Color::new(0.88, 0.64, 0.24, 1.0),
+                        Color::new(0.26, 0.19, 0.12, 1.0),
+                        Color::new(0.96, 0.82, 0.44, 1.0),
+                        false,
+                        true,
+                        true,
+                    );
+                }
+                EnemyKind::Lion => {
+                    draw_quadruped(
+                        e,
+                        dir,
+                        side,
+                        48.0,
+                        28.0,
+                        12.0,
+                        Color::new(0.82, 0.64, 0.32, 1.0),
+                        Color::new(0.42, 0.28, 0.14, 1.0),
+                        Color::new(0.46, 0.28, 0.14, 1.0),
+                        true,
+                        false,
+                        false,
+                    );
+                }
+                EnemyKind::Buffalo => {
+                    draw_quadruped(
+                        e,
+                        dir,
+                        side,
+                        52.0,
+                        34.0,
+                        13.0,
+                        Color::new(0.28, 0.27, 0.29, 1.0),
+                        Color::new(0.16, 0.15, 0.17, 1.0),
+                        Color::new(0.40, 0.38, 0.36, 1.0),
+                        false,
+                        true,
+                        false,
+                    );
+                }
+                EnemyKind::Scorpion => {
+                    let shell = Color::new(0.34, 0.25, 0.18, 1.0);
+                    let plate = Color::new(0.52, 0.39, 0.23, 1.0);
+                    // Curled tail with a bright sting.
+                    for k in 0..4 {
+                        let p = e.pos - dir * (11.0 + k as f32 * 6.0)
+                            + side * ((k as f32 * 1.5 + 0.6).sin() * 5.0);
+                        draw_circle(p.x, p.y, 4.6 - k as f32 * 0.5, plate);
+                    }
+                    let sting = e.pos - dir * 35.0 + side * 2.0;
+                    draw_circle(sting.x, sting.y, 4.2, Color::new(0.86, 0.32, 0.22, 1.0));
+                    // Legs.
+                    for s in [-1.0, 1.0] {
+                        for k in 0..3 {
+                            let base = e.pos + dir * (6.0 - k as f32 * 7.0) + side * (7.0 * s);
+                            draw_line(
+                                base.x,
+                                base.y,
+                                base.x + side.x * 9.0 * s + dir.x * 3.0,
+                                base.y + side.y * 9.0 * s + dir.y * 3.0,
+                                2.0,
+                                shell,
+                            );
+                        }
+                    }
+                    // Pincers held out front.
+                    for s in [-1.0, 1.0] {
+                        let arm = e.pos + dir * 8.0 + side * (9.0 * s);
+                        draw_line(
+                            e.pos.x + side.x * 5.0 * s,
+                            e.pos.y + side.y * 5.0 * s,
+                            arm.x,
+                            arm.y,
+                            3.0,
+                            shell,
+                        );
+                        let claw = arm + dir * 8.0 + side * (3.0 * s);
+                        outlined_circle(claw, 5.6, plate);
+                        draw_line(
+                            claw.x - side.x * 4.0 * s,
+                            claw.y - side.y * 4.0 * s,
+                            claw.x + dir.x * 8.0,
+                            claw.y + dir.y * 8.0,
+                            2.0,
+                            shell,
+                        );
+                    }
+                    outlined_circle(e.pos, 11.0, shell);
+                    draw_circle(
+                        e.pos.x - dir.x * 2.0,
+                        e.pos.y - dir.y * 2.0,
+                        6.0,
+                        plate,
+                    );
+                    for s in [-1.0, 1.0] {
+                        let eye = e.pos + dir * 8.0 + side * (4.0 * s);
+                        draw_circle(eye.x, eye.y, 1.8, Color::new(1.0, 0.42, 0.24, 1.0));
+                    }
+                }
+                EnemyKind::Boa => {
+                    let coil = Color::new(0.30, 0.45, 0.22, 1.0);
+                    let dark = Color::new(0.19, 0.29, 0.14, 1.0);
+                    let band = Color::new(0.74, 0.66, 0.30, 1.0);
+                    for k in 0..6 {
+                        let t = k as f32;
+                        let p = e.pos - dir * (t * 11.0)
+                            + side * ((t * 1.1 + e.facing).sin() * 7.0);
+                        outlined_circle(p, 9.5 - t * 0.7, if k % 2 == 0 { coil } else { dark });
+                        if k % 3 == 1 {
+                            draw_circle(p.x, p.y, 3.6, with_alpha(band, 0.8));
+                        }
+                    }
+                    let head = e.pos + dir * 10.0;
+                    outlined_circle(head, 10.0, coil);
+                    draw_circle(
+                        head.x + dir.x * 6.0,
+                        head.y + dir.y * 6.0,
+                        4.6,
+                        dark,
+                    );
+                    for s in [-1.0, 1.0] {
+                        let eye = head + side * (4.6 * s) + dir * 2.0;
+                        draw_circle(eye.x, eye.y, 2.4, Color::new(1.0, 0.82, 0.26, 1.0));
+                        draw_circle(eye.x, eye.y, 0.9, OUTLINE);
+                    }
+                    let tongue = head + dir * 12.0;
+                    draw_line(
+                        head.x + dir.x * 8.0,
+                        head.y + dir.y * 8.0,
+                        tongue.x,
+                        tongue.y,
+                        1.4,
+                        Color::new(0.92, 0.28, 0.32, 1.0),
                     );
                 }
             }

@@ -669,4 +669,30 @@ mod tests {
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn biomes_and_water_are_laid_out_sensibly() {
+        use crate::world::{biome_at, Biome, MEADOW_RADIUS, WORLD_SIZE};
+
+        let center = vec2(WORLD_SIZE * 0.5, WORLD_SIZE * 0.5);
+        assert_eq!(biome_at(center), Biome::Meadow);
+        assert_eq!(biome_at(center + vec2(1500.0, 600.0)), Biome::Savanna);
+        assert_eq!(biome_at(center + vec2(-1500.0, 200.0)), Biome::Rainforest);
+        assert_eq!(biome_at(center + vec2(200.0, -1500.0)), Biome::Desert);
+
+        let game = Game::new();
+        assert!(game.world.water.len() >= 3, "world needs bodies of water");
+        for w in game.world.water.iter() {
+            assert!(
+                w.pos.distance(center) > MEADOW_RADIUS,
+                "water must not sit in the starting meadow"
+            );
+        }
+        for n in game.world.nodes.iter() {
+            assert!(!game.world.is_water(n.pos), "node spawned in water");
+        }
+        for t in game.world.targets.iter() {
+            assert!(!game.world.is_water(t.pos), "target spawned in water");
+        }
+    }
 }

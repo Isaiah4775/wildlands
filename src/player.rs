@@ -532,6 +532,20 @@ impl Player {
                 self.pos = n.pos + push * min_dist;
             }
         }
+        // Water is impassable: the survivor wades up to the bank and no
+        // further, sliding along the shoreline instead of walking through it.
+        for w in world.water.iter() {
+            let off = self.pos - w.pos;
+            let min_dist = w.radius + self.radius * 0.5;
+            if off.length_squared() < min_dist * min_dist {
+                let push = if off.length_squared() > 0.01 {
+                    off.normalize()
+                } else {
+                    vec2(1.0, 0.0)
+                };
+                self.pos = w.pos + push * min_dist;
+            }
+        }
     }
 
     pub fn draw(&self) {
